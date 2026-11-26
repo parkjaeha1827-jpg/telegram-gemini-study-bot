@@ -11,8 +11,8 @@ import time
 import requests
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# Load .env file with override=True to guarantee .env values are used
+load_dotenv(override=True)
 
 from bot_core import TelegramBot
 

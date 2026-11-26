@@ -10,6 +10,12 @@ import base64
 import requests
 from typing import Optional, Tuple
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+except ImportError:
+    pass
+
 SYSTEM_INSTRUCTION = """
 អ្នកជា "គ្រូជំនួយឆ្លាតវៃ (Smart Study Tutor & Homework Solver)" ដែលមានជំនាញខ្ពស់បំផុតក្នុងការដោះស្រាយលំហាត់ សំណួរស្រាវជ្រាវ និងវិញ្ញាសាគ្រប់កម្រិត (បឋម, អនុវិទ្យាល័យ, វិទ្យាល័យ, បាក់ឌុប, និងសាកលវិទ្យាល័យ) លើគ្រប់មុខវិជ្ជា៖
 
@@ -37,9 +43,17 @@ SYSTEM_INSTRUCTION = """
 class GeminiSolver:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        # Default model with high reasoning capability
-        self.model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-        self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        # Primary requested model: Gemini 3.8 Flash High
+        self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+        # List of candidate models for resilience against temporary demand spikes
+        self.candidate_models = [
+            self.primary_model,
+            "gemini-3-flash-preview",
+            "gemini-3.5-flash",
+            "gemini-flash-latest"
+        ]
+        # Remove duplicates while preserving order
+        self.candidate_models = list(dict.fromkeys(self.candidate_models))
 
     def solve(
         self,
@@ -70,7 +84,7 @@ class GeminiSolver:
         text_content = prompt.strip() if prompt else "សូមជួយវិភាគ និងដោះស្រាយលំហាត់ក្នុងរូបភាពនេះមួយជំហានម្តងៗឲ្យបានលម្អិតបំផុត។"
         parts.append({"text": text_content})
 
-        # Base request payload
+        # Base request payload with High Reasoning thinkingConfig
         payload = {
             "contents": [
                 {
@@ -81,66 +95,60 @@ class GeminiSolver:
                 "parts": [
                     {"text": SYSTEM_INSTRUCTION}
                 ]
-            }
-        }
-
-        # Attempt 1: With High Reasoning (thinkingConfig)
-        payload_with_thinking = json.loads(json.dumps(payload))
-        payload_with_thinking["generationConfig"] = {
-            "temperature": 0.2,
-            "maxOutputTokens": 8192,
-            "thinkingConfig": {
-                "thinkingBudget": 8192
-            }
-        }
-
-        url = f"{self.base_url}?key={self.api_key}"
-        headers = {"Content-Type": "application/json"}
-
-        try:
-            resp = requests.post(url, headers=headers, json=payload_with_thinking, timeout=60)
-            
-            # If 200 OK, extract response
-            if resp.status_code == 200:
-                result = resp.json()
-                return self._extract_text(result)
-
-            # If model does not support thinkingConfig (HTTP 400), retry with standard generationConfig
-            if resp.status_code == 400:
-                error_body = resp.text
-                if "API_KEY_INVALID" in error_body or "API key not valid" in error_body:
-                    return False, (
-                        "⚠️ **Google Gemini API Key មិនត្រឹមត្រូវឡើយ (API Key Invalid)**\n\n"
-                        "🔑 សូមចូលទៅកាន់ [Google AI Studio](https://aistudio.google.com/app/apikey) "
-                        "ដើម្បីចុចបង្កើត API Key ថ្មី (ដែលចាប់ផ្តើមដោយ `AIzaSy...`) "
-                        "រួចយកមកដាក់ក្នុងឯកសារ `.env` (ត្រង់ GEMINI_API_KEY=)។"
-                    )
-                
-                payload_standard = json.loads(json.dumps(payload))
-                payload_standard["generationConfig"] = {
-                    "temperature": 0.3,
-                    "maxOutputTokens": 8192
+            },
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 8192,
+                "thinkingConfig": {
+                    "thinkingBudget": 4096
                 }
-                resp2 = requests.post(url, headers=headers, json=payload_standard, timeout=60)
-                if resp2.status_code == 200:
-                    result = resp2.json()
-                    return self._extract_text(result)
-                else:
-                    if "API_KEY_INVALID" in resp2.text or "API key not valid" in resp2.text:
-                        return False, (
-                            "⚠️ **Google Gemini API Key មិនត្រឹមត្រូវឡើយ (API Key Invalid)**\n\n"
-                            "🔑 សូមចូលទៅកាន់ [Google AI Studio](https://aistudio.google.com/app/apikey) "
-                            "ដើម្បីចុចបង្កើត API Key ថ្មី (ដែលចាប់ផ្តើមដោយ `AIzaSy...`) "
-                            "រួចយកមកដាក់ក្នុងឯកសារ `.env` (ត្រង់ GEMINI_API_KEY=)។"
-                        )
-                    return False, f"⚠️ Gemini API Error ({resp2.status_code}): {resp2.text}"
+            }
+        }
 
-            return False, f"⚠️ Gemini API Error ({resp.status_code}): {resp.text}"
+        # Use x-goog-api-key header (compatible with all API key formats including AQ. and AIzaSy)
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key
+        }
 
-        except requests.exceptions.Timeout:
-            return False, "⏳ ការស្នើសុំបានផុតកំណត់ (Request Timeout)។ សូមព្យាយាមម្តងទៀត។"
-        except Exception as e:
-            return False, f"⚠️ មានបញ្ហាក្នុងការតភ្ជាប់ទៅកាន់ Gemini API: {str(e)}"
+        last_error = ""
+
+        # Try models in priority order with automatic fallback
+        for model_name in self.candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=60)
+
+                if resp.status_code == 200:
+                    return self._extract_text(resp.json())
+
+                # If 400 Bad Request regarding thinkingConfig, retry without it
+                if resp.status_code == 400 and "thinking" in resp.text.lower():
+                    payload_no_thinking = json.loads(json.dumps(payload))
+                    payload_no_thinking["generationConfig"].pop("thinkingConfig", None)
+                    resp2 = requests.post(url, headers=headers, json=payload_no_thinking, timeout=60)
+                    if resp2.status_code == 200:
+                        return self._extract_text(resp2.json())
+
+                # If 503 (high demand) or 404, fallback to next model
+                if resp.status_code in [503, 404]:
+                    last_error = f"{model_name}: {resp.status_code}"
+                    continue
+
+                if "API_KEY_INVALID" in resp.text or "API key not valid" in resp.text:
+                    return False, "⚠️ Google Gemini API Key មិនត្រឹមត្រូវឡើយ។ សូមពិនិត្យមើល API Key ឡើងវិញ។"
+
+                last_error = f"{model_name} ({resp.status_code}): {resp.text}"
+
+            except requests.exceptions.Timeout:
+                last_error = f"{model_name} timed out"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        return False, f"⚠️ Gemini API កំពុងមានបញ្ហាឆ្លើយតប: {last_error}"
 
     def _extract_text(self, data: dict) -> Tuple[bool, str]:
         """Extracts generated text from Gemini response JSON."""
@@ -148,7 +156,7 @@ class GeminiSolver:
             candidates = data.get("candidates", [])
             if not candidates:
                 return False, "⚠️ មិនមានចម្លើយពីប្រព័ន្ធឡើយ (No response candidate)."
-            
+
             parts = candidates[0].get("content", {}).get("parts", [])
             texts = [p.get("text", "") for p in parts if "text" in p]
             reply = "\n".join(texts).strip()
