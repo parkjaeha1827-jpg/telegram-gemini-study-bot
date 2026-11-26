@@ -44,13 +44,13 @@ class GeminiSolver:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         # Primary requested model: Gemini 3.8 Flash High
-        self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+        self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
         self.model = self.primary_model
         # List of candidate models for resilience against temporary demand spikes
         self.candidate_models = [
             self.primary_model,
             "gemini-3-flash-preview",
-            "gemini-3.5-flash",
+            "gemini-3.8-flash",
             "gemini-flash-latest"
         ]
         # Remove duplicates while preserving order
@@ -119,7 +119,7 @@ class GeminiSolver:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                resp = requests.post(url, headers=headers, json=payload, timeout=25)
 
                 if resp.status_code == 200:
                     return self._extract_text(resp.json())
