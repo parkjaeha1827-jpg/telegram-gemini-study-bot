@@ -45,6 +45,7 @@ class GeminiSolver:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         # Primary requested model: Gemini 3.8 Flash High
         self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+        self.model = self.primary_model
         # List of candidate models for resilience against temporary demand spikes
         self.candidate_models = [
             self.primary_model,
