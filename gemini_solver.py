@@ -107,6 +107,15 @@ class GeminiSolver:
 
             # If model does not support thinkingConfig (HTTP 400), retry with standard generationConfig
             if resp.status_code == 400:
+                error_body = resp.text
+                if "API_KEY_INVALID" in error_body or "API key not valid" in error_body:
+                    return False, (
+                        "⚠️ **Google Gemini API Key មិនត្រឹមត្រូវឡើយ (API Key Invalid)**\n\n"
+                        "🔑 សូមចូលទៅកាន់ [Google AI Studio](https://aistudio.google.com/app/apikey) "
+                        "ដើម្បីចុចបង្កើត API Key ថ្មី (ដែលចាប់ផ្តើមដោយ `AIzaSy...`) "
+                        "រួចយកមកដាក់ក្នុងឯកសារ `.env` (ត្រង់ GEMINI_API_KEY=)។"
+                    )
+                
                 payload_standard = json.loads(json.dumps(payload))
                 payload_standard["generationConfig"] = {
                     "temperature": 0.3,
@@ -117,6 +126,13 @@ class GeminiSolver:
                     result = resp2.json()
                     return self._extract_text(result)
                 else:
+                    if "API_KEY_INVALID" in resp2.text or "API key not valid" in resp2.text:
+                        return False, (
+                            "⚠️ **Google Gemini API Key មិនត្រឹមត្រូវឡើយ (API Key Invalid)**\n\n"
+                            "🔑 សូមចូលទៅកាន់ [Google AI Studio](https://aistudio.google.com/app/apikey) "
+                            "ដើម្បីចុចបង្កើត API Key ថ្មី (ដែលចាប់ផ្តើមដោយ `AIzaSy...`) "
+                            "រួចយកមកដាក់ក្នុងឯកសារ `.env` (ត្រង់ GEMINI_API_KEY=)។"
+                        )
                     return False, f"⚠️ Gemini API Error ({resp2.status_code}): {resp2.text}"
 
             return False, f"⚠️ Gemini API Error ({resp.status_code}): {resp.text}"
