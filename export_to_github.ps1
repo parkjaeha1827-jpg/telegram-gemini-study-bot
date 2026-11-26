@@ -1,4 +1,4 @@
-﻿# PowerShell Script: Auto-Export Project to GitHub
+# PowerShell Script: Auto-Export Project to GitHub
 param (
     [string]$RepoUrl = ""
 )
