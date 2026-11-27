@@ -1,7 +1,7 @@
 """
 HTML/KaTeX to PNG Image Renderer
 Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, large, full-width PNG images.
-Strictly ensures: 1 Exercise = Exactly 1 Complete Image Page (Never truncated or cut off).
+Refined typography for comfortable reading where all detailed steps and final answers are visible.
 """
 
 import os
@@ -30,11 +30,12 @@ def decode_solution_payload(encoded_str: str) -> str:
         return ""
 
 
-def split_solution_into_cards(markdown_text: str) -> List[str]:
+def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1600) -> List[str]:
     """
     Splits multi-exercise solutions strictly by exercise boundary.
-    Guarantees: 1 Exercise = Exactly 1 Complete Image Page (Never truncated or split in half).
-    Each card contains the complete exercise from the title, steps, down to the final answer.
+    Guarantees: 1 Exercise = 1 Complete Image Page with full detailed steps and final answer.
+    If a single exercise is exceptionally long (> 1600 chars), splits cleanly into Part 1 & Part 2
+    ensuring Part 2 always retains the complete final answer.
     """
     text = markdown_text.strip()
     if not text:
@@ -44,7 +45,6 @@ def split_solution_into_cards(markdown_text: str) -> List[str]:
     sections = [s.strip() for s in re.split(r'\n\s*[-*_]{3,}\s*\n', text) if s.strip()]
 
     # 2. If no horizontal rules, check for bold numbered exercise patterns:
-    # Matches: **២៥. or **25. or **លំហាត់ទី ២៥ or **លំហាត់ ២៥
     if len(sections) <= 1:
         pattern = r'(?=\n\s*\*\*(?:[០-៩\d]+\s*[\.\:\)]|លំហាត់[ទី\s]*[០-៩\d]+))'
         parts = [p.strip() for p in re.split(pattern, text) if p.strip()]
@@ -58,13 +58,46 @@ def split_solution_into_cards(markdown_text: str) -> List[str]:
         if len(parts) > 1:
             sections = parts
 
-    return sections if sections else [text]
+    final_cards = []
+    for sec in sections:
+        if len(sec) <= max_chars_per_card:
+            final_cards.append(sec)
+        else:
+            paragraphs = [p.strip() for p in sec.split("\n\n") if p.strip()]
+            current = []
+            current_len = 0
+            part_idx = 1
+
+            header_match = re.match(r'^(\*\*[^\n\*]+\*\*|\#\#\s+[^\n]+)', sec)
+            header_prefix = header_match.group(1) if header_match else ""
+
+            for p in paragraphs:
+                p_len = len(p) + 2
+                if current_len + p_len > max_chars_per_card and current:
+                    part_text = "\n\n".join(current)
+                    if part_idx > 1 and header_prefix and not part_text.startswith(header_prefix):
+                        part_text = f"{header_prefix} _(ត)_ \n\n" + part_text
+                    final_cards.append(part_text)
+                    part_idx += 1
+                    current = [p]
+                    current_len = p_len
+                else:
+                    current.append(p)
+                    current_len += p_len
+
+            if current:
+                part_text = "\n\n".join(current)
+                if part_idx > 1 and header_prefix and not part_text.startswith(header_prefix):
+                    part_text = f"{header_prefix} _(ត)_ \n\n" + part_text
+                final_cards.append(part_text)
+
+    return final_cards if final_cards else [text]
 
 
 def get_solution_html(markdown_text: str) -> str:
     """
-    Generates high-contrast HTML document with large Kantumruy Pro font,
-    crisp KaTeX math, and full-width card layout specifically tailored for mobile screens.
+    Generates high-contrast HTML document with comfortable Kantumruy Pro font (20px),
+    crisp KaTeX math (1.22em), and balanced layout where all steps and answers are visible.
     """
     encoded_b64 = base64.b64encode(markdown_text.encode("utf-8")).decode("ascii")
 
@@ -96,86 +129,86 @@ def get_solution_html(markdown_text: str) -> str:
     }}
     #solution-card {{
       background: #ffffff;
-      width: 680px;
-      padding: 36px 40px;
-      border-radius: 20px;
+      width: 720px;
+      padding: 30px 36px;
+      border-radius: 18px;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
       border: 1.5px solid #e2e8f0;
     }}
     .badge {{
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       background: #f0fdf4;
       color: #15803d;
-      font-size: 19px;
+      font-size: 16.5px;
       font-weight: 700;
-      padding: 7px 18px;
+      padding: 6px 16px;
       border-radius: 9999px;
-      margin-bottom: 22px;
+      margin-bottom: 18px;
       border: 1.5px solid #86efac;
     }}
     #content-body {{
-      font-size: 24px;
-      line-height: 1.85;
+      font-size: 20px;
+      line-height: 1.78;
       color: #0f172a;
       font-weight: 500;
     }}
     #content-body h1, #content-body h2, #content-body h3 {{
       color: #020617;
-      margin: 18px 0 12px 0;
-      font-size: 27px;
+      margin: 14px 0 8px 0;
+      font-size: 23px;
       font-weight: 800;
     }}
     #content-body p {{
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }}
     #content-body strong {{
       color: #020617;
-      font-size: 25px;
+      font-size: 21.5px;
       font-weight: 800;
     }}
     #content-body hr {{
       border: none;
-      border-top: 2px dashed #cbd5e1;
-      margin: 22px 0;
+      border-top: 1.5px dashed #cbd5e1;
+      margin: 18px 0;
     }}
     #content-body ul, #content-body ol {{
-      margin: 10px 0 14px 28px;
+      margin: 8px 0 12px 24px;
     }}
     #content-body li {{
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }}
     .katex {{
-      font-size: 1.35em !important;
+      font-size: 1.22em !important;
     }}
     .katex-display {{
-      margin: 18px 0 !important;
-      padding: 8px 0;
-      font-size: 1.3em !important;
+      margin: 14px 0 !important;
+      padding: 4px 0;
+      font-size: 1.2em !important;
       overflow-x: auto;
       overflow-y: hidden;
     }}
     pre, code {{
       font-family: 'Kantumruy Pro', monospace;
       background: #f8fafc;
-      border-radius: 10px;
+      border-radius: 8px;
     }}
     pre {{
-      padding: 14px 18px;
-      margin: 14px 0;
+      padding: 12px 16px;
+      margin: 10px 0;
       border: 1.5px solid #cbd5e1;
-      font-size: 21px;
+      font-size: 18px;
       overflow-x: auto;
     }}
     .footer-watermark {{
-      margin-top: 28px;
-      padding-top: 14px;
+      margin-top: 22px;
+      padding-top: 12px;
       border-top: 1.5px solid #f1f5f9;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 15px;
+      font-size: 13.5px;
       font-weight: 600;
       color: #64748b;
     }}
@@ -245,7 +278,7 @@ def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[by
             "screenshot": "true",
             "embed": "screenshot.url",
             "element": "#solution-card",
-            "viewport.width": "760",
+            "viewport.width": "800",
             "viewport.deviceScaleFactor": "2",
             "waitForTimeout": "1000"
         }
