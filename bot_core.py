@@ -381,11 +381,16 @@ class TelegramBot:
         safe_title = html.escape(clean_title)
         safe_author = html.escape(clean_unwanted_thai(info.get("author")) or "N/A")
 
+        if platform_code.lower() == "capcut":
+            quality_text = "Original Template HD"
+        else:
+            quality_text = "គ្មាន Watermark (No Logo) • HD"
+
         caption = (
             f"🎬 <b>{safe_title}</b>\n"
             f"👤 <b>អ្នកបង្កើត:</b> {safe_author}\n"
             f"📌 <b>ប្រភព:</b> {p_name}\n"
-            f"✨ <b>កម្រិត:</b> គ្មាន Watermark (No Logo) • HD\n\n"
+            f"✨ <b>កម្រិត:</b> {quality_text}\n\n"
             f"🤖 <i>ទាញយកដោយជោគជ័យតាមរយៈ Telegram Study Bot</i>"
         )
 
@@ -408,7 +413,7 @@ class TelegramBot:
             f"👤 <b>អ្នកបង្កើត:</b> {safe_author}\n"
             f"📌 <b>ប្រភព:</b> {p_name}\n"
             f"📦 <b>ទំហំ:</b> {size_str}\n"
-            f"✨ <b>កម្រិត:</b> គ្មាន Watermark (No Logo) • HD\n\n"
+            f"✨ <b>កម្រិត:</b> {quality_text}\n\n"
             f"⚡ <i>ដោយសារទំហំវីដេអូធំ (Telegram Bot កំណត់ផ្ញើត្រឹម 50MB) សូមចុចប៊ូតុងខាងក្រោមដើម្បីទាញយកផ្ទាល់បានលឿនបំផុត៖</i>"
         )
         reply_markup = {
