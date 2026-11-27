@@ -24,10 +24,19 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Health check endpoint and KaTeX solution card HTML renderer."""
         parsed = urllib.parse.urlparse(self.path)
+        query_params = urllib.parse.parse_qs(parsed.query)
 
         # Handle KaTeX solution HTML render route
-        if parsed.path in ("/solution", "/api/solution") or parsed.path.startswith("/solution"):
-            query_params = urllib.parse.parse_qs(parsed.query)
+        is_solution = (
+            parsed.path in ("/solution", "/api/solution")
+            or parsed.path.startswith("/solution")
+            or "c" in query_params
+            or query_params.get("route") == ["solution"]
+            or "solution" in self.headers.get("x-matched-path", "")
+            or "solution" in self.headers.get("x-forwarded-uri", "")
+        )
+
+        if is_solution:
             c_list = query_params.get("c", [])
             payload = c_list[0] if c_list else ""
             markdown_text = decode_solution_payload(payload)
