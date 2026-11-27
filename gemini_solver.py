@@ -20,18 +20,40 @@ except ImportError:
 SYSTEM_INSTRUCTION = """
 អ្នកជាគ្រូជំនួយដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា (គណិតវិទ្យា, រូបវិទ្យា, គីមីវិទ្យា, ជីវវិទ្យា, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...)។
 
-ច្បាប់ដាច់ខាតក្នុងការសរសេររូបមន្តគណិតវិទ្យាសម្រាប់ Telegram (STRICT UNICODE MATH ONLY):
-១. ហាមដាច់ខាតកុំប្រើកូដ LaTeX (ដូចជា \\frac, \\sqrt, \\int, \\lim, \\to, \\infty, \\log, $, $$) ព្រោះ Telegram មិនអាចបង្ហាញកូដ LaTeX បានឡើយ និងធ្វើឱ្យពិបាកអាន។
-២. ត្រូវសរសេររូបមន្ត និងសមីការទាំងអស់ជាអក្សរ និងនិមិត្តសញ្ញា Unicode ធម្មតាដែលស្រួលអាន៖
-   - ប្រភាគ៖ សរសេរជាទម្រង់ (A) / (B) ឬ (A)/(B) (ឧ. (1 - cos 2x) / 2, (π - 2) / 8)
-   - ឫសការេ៖ ប្រើសញ្ញា √ ផ្ទាល់ (ឧ. √2 + i√6, √((√2)² + (√6)²) = √(2 + 6) = √8 = 2√2)
+ច្បាប់ដាច់ខាតក្នុងការសរសេរប្រភាគ និងរូបមន្តគណិតវិទ្យា (STRICT VERTICAL FRACTION ONLY):
+១. ច្បាប់ដាច់ខាតសម្រាប់ប្រភាគ (VERTICAL FRACTIONS):
+   - ហាមដាច់ខាតកុំប្រើសញ្ញាចែក / សម្រាប់ប្រភាគ (ដូចជា a/b ឬ (a)/(b))។
+   - រាល់ប្រភាគទាំងអស់ ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម។
+   - ឧទាហរណ៍ជាក់ស្តែង៖
+     ○  ខ) 
+        35 - q     35 - 25     10
+        ──────  =  ───────  =  ──  =  2
+          5           5         5
+
+     ○  គ) 
+        12q         12(25)
+        ─── + 30  =  ────── + 30  =  75 + 30  =  105
+         4            4
+
+     ○  ឃ) 
+        15q + 75     15(25) + 75     375 + 75     450
+        ────────  =  ───────────  =  ────────  =  ───  =  15
+           30             30            30         30
+
+        1 - cos 2x
+        ──────────
+            2
+
+២. ហាមប្រើកូដ LaTeX (ដូចជា \\frac, \\sqrt, \\int, \\lim, $, $$) ព្រោះ Telegram មិនគាំទ្រ LaTeX ឡើយ។ ត្រូវប្រើនិមិត្តសញ្ញា Unicode ស្អាតៗ៖
+   - ឫសការេ៖ √2, √6, √8 = 2√2
    - ស្វ័យគុណ៖ ប្រើអក្សរតូចលើ ² ³ ⁴ ⁿ (ឧ. sin² x, x², 3¹ = 3, e⁴)
    - សន្ទស្សន៍ និងលោការីត៖ log₃(x + 1), x₁, x₂ (ប្រើ ₁ ₂ ₃ ...)
-   - អាំងតេក្រាល និង លីមីត៖ ∫[0 → π/4] ... dx, lim(x → +∞)
+   - អាំងតេក្រាល និង លីមីត៖ ∫[0 → π/4], lim(x → +∞)
    - សញ្ញាព្រួញ និងសមភាព៖ →, ⇒, ⇔, ∞, π, ×, ÷, ±, ≠, ≤, ≥
+
 ៣. ទម្រង់លំហាត់ស្តង់ដារ៖
-   - «**លំហាត់ទី ...**»
-   - ចំណុចរង «○  ក) [កន្សោមដើម] = [ជំនួសលេខ] = [គណនាបណ្តើរៗ] = [ចម្លើយចុងក្រោយ]»
+   - ក្បាលលំហាត់ «**លំហាត់ទី ...**»
+   - ចំណុចរង «○  ក) », «○  ខ) » ...
    - ហាមប្រើពាក្យស្វាគមន៍នាំមុខ («សួស្តី...») និងហាមប្រើបឋមកថាវែងអន្លាយ («📌 បម្រាប់ប្រធាន», «📐 រូបមន្ត»)។
 """.strip()
 
@@ -39,7 +61,8 @@ SYSTEM_INSTRUCTION = """
 def format_math_telegram(text: str) -> str:
     """
     Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
-    Ensures equations are 100% readable on mobile devices.
+    Converts fractions into true vertical fractions with a top, horizontal fraction bar ───, and bottom.
+    Never uses slash / for fractions.
     """
     if not text:
         return ""
@@ -59,10 +82,16 @@ def format_math_telegram(text: str) -> str:
     text = re.sub(r"\\ln", "ln", text)
     text = re.sub(r"\\log", "log", text)
 
-    # Fractions: \frac{A}{B} -> (A) / (B)
+    # Fractions: \frac{A}{B} -> Vertical fraction with top, ───, and bottom (NO /)
+    def to_vert_fraction(m):
+        num = m.group(1).strip()
+        den = m.group(2).strip()
+        width = max(len(num), len(den)) + 2
+        bar = "─" * width
+        return f"\n {num.center(width)}\n {bar}\n {den.center(width)}\n"
+
     for _ in range(5):
-        text = re.sub(r"\\frac\{([a-zA-Z0-9\s\+\-\*]{1,4})\}\{([a-zA-Z0-9\s]{1,4})\}", r"(\1/\2)", text)
-        text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", text)
+        text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", to_vert_fraction, text)
 
     # Square roots: \sqrt{...} -> √(...)
     for _ in range(5):
@@ -185,8 +214,8 @@ class GeminiSolver:
 
         text_content = prompt.strip() if prompt else (
             "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «**លំហាត់ទី...**», ចំណុចរង «○  ក)  ខ)  គ)...», "
-            "និងបង្ហាញដំណោះស្រាយជាខ្សែសង្វាក់សមភាពមួយជួរៗ (inline chained equality) តភ្ជាប់ដោយសញ្ញា = ពីដើមរហូតដល់ចម្លើយចុងក្រោយ "
-            "ដោយប្រើរូបមន្តនិមិត្តសញ្ញា Unicode ស្អាតៗ (ហាមប្រើ LaTeX commands ដូចជា \\frac, \\sqrt, \\int, $, $$)។"
+            "រាល់ប្រភាគទាំងអស់ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម (ហាមប្រើសញ្ញា / សម្រាប់ប្រភាគជាដាច់ខាត) "
+            "និងប្រើរូបមន្តនិមិត្តសញ្ញា Unicode ស្អាតៗ (ហាមប្រើ LaTeX commands ដូចជា \\frac, \\sqrt, \\int, $, $$)។"
         )
         parts.append({"text": text_content})
 
