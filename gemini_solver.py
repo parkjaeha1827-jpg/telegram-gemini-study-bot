@@ -39,6 +39,10 @@ SYSTEM_INSTRUCTION = """
 ៤. បញ្ចប់ចម្លើយ៖
    - ប្រសិនបើជាលំហាត់ពហុជ្រើសរើស (Multiple Choice): បញ្ចប់ដោយ «ចម្លើយត្រឹមត្រូវគឺ គ. I = (π - 2)/8» (ឬ គ. r = 2√2)
    - ប្រសិនបើជាលំហាត់ដោះស្រាយសមីការ៖ បញ្ចប់ដោយ «ដូចនេះ x = 0»
+៥. គម្លាតជួរលើក្រោម (COMPACT VERTICAL SPACING):
+   - ហាមដាច់ខាតកុំទុកគម្លាតជួរទទេ (Blank lines) ឆ្ងាយពីគ្នាពេក ទាំងក្នុង និងក្រៅប្រអប់ Code block។
+   - រវាងអត្ថបទ និងប្រអប់ Code block ត្រូវចុះបន្ទាត់ត្រឹម ១ ជួរបានហើយ។
+   - ក្នុងប្រអប់ Code block ហាមទុកបន្ទាត់ទទេច្រើនជាន់ រាល់ជំហានគណនាត្រូវនៅកៀកគ្នាសមល្មម ងាយស្រួលមើល និងស្អាតបាត។
 
 គំរូជាក់ស្តែងទាំង ៤ (FOLLOW THESE EXACTLY):
 
@@ -179,6 +183,44 @@ def wrap_orphan_fraction_blocks(text: str) -> str:
     return "```".join(parts)
 
 
+def compact_vertical_spacing(text: str) -> str:
+    """
+    Eliminates excessive vertical gaps between lines and around code blocks
+    so the math display remains compact, tight, and comfortable to read on Telegram.
+    """
+    if not text:
+        return ""
+
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    parts = text.split("```")
+    for i in range(len(parts)):
+        if i % 2 == 1:
+            # Inside code block: remove redundant blank lines
+            lines = parts[i].split("\n")
+            while lines and not lines[0].strip():
+                lines.pop(0)
+            while lines and not lines[-1].strip():
+                lines.pop()
+            compact_lines = []
+            prev_empty = False
+            for line in lines:
+                is_empty = not line.strip()
+                if is_empty and prev_empty:
+                    continue
+                compact_lines.append(line)
+                prev_empty = is_empty
+            parts[i] = "\n" + "\n".join(compact_lines) + "\n"
+        else:
+            # Outside code block: ensure no excessive gap right before/after ```
+            parts[i] = re.sub(r"\n{2,}$", "\n", parts[i])
+            parts[i] = re.sub(r"^\n{2,}", "\n", parts[i])
+
+    result = "```".join(parts)
+    result = re.sub(r"\n{2,}```", "\n```", result)
+    result = re.sub(r"```\n{2,}", "```\n", result)
+    return result.strip()
+
+
 def format_math_telegram(text: str) -> str:
     """
     Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
@@ -276,6 +318,9 @@ def format_math_telegram(text: str) -> str:
 
     # Clean consecutive duplicate code block markers ``` ```
     text = re.sub(r"```\s*```", "", text)
+
+    # Eliminate excessive vertical gaps between lines and code blocks
+    text = compact_vertical_spacing(text)
 
     return text.strip()
 
