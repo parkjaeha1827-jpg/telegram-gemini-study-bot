@@ -7,11 +7,13 @@ Multi-exercise answers are strictly split by exercise boundary (1 Exercise = 1 F
 
 import os
 import re
+import html
 import requests
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from gemini_solver import GeminiSolver, format_math_telegram
 from renderer import render_solution_to_png, split_solution_into_cards
 from voice_service import text_to_speech
+from video_service import detect_video_url, extract_video_info, fetch_video_buffer
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -38,32 +40,37 @@ class TelegramBot:
         self,
         chat_id: int,
         text: str,
-        reply_to_message_id: Optional[int] = None
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: Optional[str] = "Markdown"
     ) -> bool:
         """
         Sends message to Telegram chat.
         Automatically splits messages longer than 4000 chars.
-        Tries Markdown first; if entity parsing fails, falls back to plain text.
+        Tries specified parse_mode first; if entity parsing fails, falls back to plain text.
         """
         chunks = self._chunk_message(text, max_chars=3900)
         total_chunks = len(chunks)
 
         for idx, chunk in enumerate(chunks):
-            header = f"*(ភាគ {idx+1}/{total_chunks})*\n\n" if total_chunks > 1 else ""
+            header = f"*(ភាគ {idx+1}/{total_chunks})*\n\n" if total_chunks > 1 and parse_mode == "Markdown" else ""
             msg_text = header + chunk
 
             payload = {
                 "chat_id": chat_id,
                 "text": msg_text,
-                "parse_mode": "Markdown"
             }
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
             if reply_to_message_id and idx == 0:
                 payload["reply_to_message_id"] = reply_to_message_id
+            if reply_markup and idx == (total_chunks - 1):
+                payload["reply_markup"] = reply_markup
 
             try:
                 resp = requests.post(f"{self.base_url}/sendMessage", json=payload, timeout=20)
                 if resp.status_code != 200:
-                    # Retry without Markdown formatting if Telegram entity parsing failed
+                    # Retry without formatting if Telegram entity parsing failed
                     payload.pop("parse_mode", None)
                     plain_header = f"(ភាគ {idx+1}/{total_chunks})\n\n" if total_chunks > 1 else ""
                     payload["text"] = plain_header + chunk
@@ -140,6 +147,69 @@ class TelegramBot:
             return False
         except Exception as e:
             print(f"Exception sending voice: {e}")
+            return False
+
+    def send_video(
+        self,
+        chat_id: int,
+        video: Union[str, bytes],
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        supports_streaming: bool = True,
+        parse_mode: Optional[str] = "HTML"
+    ) -> bool:
+        """
+        Sends video to Telegram chat via sendVideo.
+        Supports direct video URL (zero-RAM streaming) or bytes (memory buffer).
+        """
+        try:
+            if isinstance(video, str):
+                # Step 1: Direct URL passing (Telegram downloads directly from source, 0 RAM on Vercel)
+                payload: Dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "video": video,
+                    "supports_streaming": supports_streaming
+                }
+                if caption:
+                    payload["caption"] = caption
+                if parse_mode:
+                    payload["parse_mode"] = parse_mode
+                if reply_to_message_id:
+                    payload["reply_to_message_id"] = reply_to_message_id
+                if reply_markup:
+                    payload["reply_markup"] = reply_markup
+
+                resp = requests.post(f"{self.base_url}/sendVideo", json=payload, timeout=30)
+                if resp.status_code == 200 and resp.json().get("ok"):
+                    return True
+                print(f"[send_video] Direct URL failed ({resp.status_code}): {resp.text}")
+                return False
+            else:
+                # Step 2: In-memory video buffer upload via multipart/form-data (< 48MB)
+                data: Dict[str, Any] = {
+                    "chat_id": chat_id,
+                    "supports_streaming": "true" if supports_streaming else "false"
+                }
+                if caption:
+                    data["caption"] = caption
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
+                if reply_to_message_id:
+                    data["reply_to_message_id"] = reply_to_message_id
+                if reply_markup:
+                    data["reply_markup"] = json.dumps(reply_markup)
+
+                files = {
+                    "video": ("video.mp4", video, "video/mp4")
+                }
+                resp = requests.post(f"{self.base_url}/sendVideo", data=data, files=files, timeout=60)
+                if resp.status_code == 200 and resp.json().get("ok"):
+                    return True
+                print(f"[send_video] Buffer upload failed ({resp.status_code}): {resp.text}")
+                return False
+        except Exception as e:
+            print(f"[send_video] Exception sending video: {e}")
             return False
 
     def get_file_bytes(self, file_id: str) -> Optional[bytes]:
@@ -268,6 +338,90 @@ class TelegramBot:
             fallback_text = format_math_telegram(answer)
             self.send_message(chat_id, fallback_text, reply_to_message_id=message_id)
 
+    def _handle_video_download(
+        self,
+        chat_id: int,
+        message_id: int,
+        video_url: str,
+        platform_code: str
+    ) -> None:
+        """
+        Handles video downloading for TikTok, Facebook, YouTube, CapCut, Pinterest.
+        Features zero-disk serverless streaming, fallback memory buffer, and inline keyboard.
+        """
+        self.send_chat_action(chat_id, "upload_video")
+
+        info = extract_video_info(video_url, platform_code)
+        if not info or not info.get("direct_url"):
+            self.send_message(
+                chat_id,
+                "❌ <b>មិនអាចទាញយកវីដេអូបានទេ</b>\n\n"
+                "សូមពិនិត្យមើលថាតើតំណភ្ជាប់វីដេអូនេះជាសាធារណៈ (Public) ឬយ៉ាងណា "
+                "ហើយព្យាយាមសាកល្បងម្ដងទៀត។",
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return
+
+        direct_url = info["direct_url"]
+        platform_names = {
+            "tiktok": "TikTok",
+            "facebook": "Facebook",
+            "youtube": "YouTube",
+            "capcut": "CapCut",
+            "pinterest": "Pinterest"
+        }
+        p_name = platform_names.get(platform_code.lower(), platform_code.capitalize())
+        raw_title = info.get("title") or f"វីដេអូ {p_name}"
+        clean_title = re.sub(r'[\r\n\t]+', ' ', raw_title).strip()
+        if len(clean_title) > 85:
+            clean_title = clean_title[:82] + "..."
+        safe_title = html.escape(clean_title)
+        safe_author = html.escape(info.get("author") or "N/A")
+
+        caption = (
+            f"🎬 <b>{safe_title}</b>\n"
+            f"👤 <b>អ្នកបង្កើត:</b> {safe_author}\n"
+            f"📌 <b>ប្រភព:</b> {p_name}\n"
+            f"✨ <b>កម្រិត:</b> គ្មាន Watermark (No Logo) • HD\n\n"
+            f"🤖 <i>ទាញយកដោយជោគជ័យតាមរយៈ Telegram Study Bot</i>"
+        )
+
+        # Step 1: Direct URL Streaming (Zero RAM on Vercel)
+        self.send_chat_action(chat_id, "upload_video")
+        if self.send_video(chat_id, direct_url, caption=caption, reply_to_message_id=message_id, parse_mode="HTML"):
+            return
+
+        # Step 2: In-Memory Buffer Fallback (< 48MB)
+        self.send_chat_action(chat_id, "upload_video")
+        video_bytes, total_size = fetch_video_buffer(direct_url, max_bytes=48 * 1024 * 1024)
+        if video_bytes:
+            if self.send_video(chat_id, video_bytes, caption=caption, reply_to_message_id=message_id, parse_mode="HTML"):
+                return
+
+        # Step 3: Inline Keyboard Button Fallback (if >50MB or if direct transfer fails)
+        size_str = f"{total_size / (1024 * 1024):.1f} MB" if total_size else "> 50 MB"
+        button_caption = (
+            f"🎬 <b>{safe_title}</b>\n"
+            f"👤 <b>អ្នកបង្កើត:</b> {safe_author}\n"
+            f"📌 <b>ប្រភព:</b> {p_name}\n"
+            f"📦 <b>ទំហំ:</b> {size_str}\n"
+            f"✨ <b>កម្រិត:</b> គ្មាន Watermark (No Logo) • HD\n\n"
+            f"⚡ <i>ដោយសារទំហំវីដេអូធំ (Telegram Bot កំណត់ផ្ញើត្រឹម 50MB) សូមចុចប៊ូតុងខាងក្រោមដើម្បីទាញយកផ្ទាល់បានលឿនបំផុត៖</i>"
+        )
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "⬇️ ទាញយកវីដេអូផ្ទាល់ (HD)", "url": direct_url}]
+            ]
+        }
+        self.send_message(
+            chat_id,
+            button_caption,
+            reply_to_message_id=message_id,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+
     def handle_update(self, update: Dict[str, Any]) -> None:
         """Processes an incoming Telegram Update dictionary."""
         message = update.get("message") or update.get("edited_message")
@@ -288,6 +442,14 @@ class TelegramBot:
         # Handle Commands
         if text.startswith("/"):
             self._handle_command(chat_id, message_id, text)
+            return
+
+        # Handle Video Downloader (TikTok, Facebook, YouTube, CapCut, Pinterest)
+        video_text = text or caption
+        video_detection = detect_video_url(video_text)
+        if video_detection:
+            matched_url, platform_code = video_detection
+            self._handle_video_download(chat_id, message_id, matched_url, platform_code)
             return
 
         # Handle Voice / Audio (Voice-to-Voice Conversation)
@@ -400,13 +562,14 @@ class TelegramBot:
                 "👋 *សួស្តីប្អូនៗ និងសិស្សានុសិស្សទាំងអស់គ្នា!*\n\n"
                 "ខ្ញុំជា *Telegram Study Bot* ជំនួយការដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា បំពាក់ដោយបច្ចេកវិទ្យា *Google Gemini Flash* 🧠✨\n\n"
                 "📚 *សមត្ថភាពចម្បង៖*\n"
+                "• 🎬 *ទាញយកវីដេអូគ្មាន Logo (HD Video Downloader):* គ្រាន់តែផ្ញើ Link មកពី TikTok, Facebook (Reels/Watch), YouTube (Shorts/Video), CapCut ឬ Pinterest នោះ Bot នឹងទាញយកវីដេអូ .mp4 គ្មាន Watermark កម្រិត HD ជូនភ្លាមៗ!\n"
                 "• 🎙️ *សន្ទនាដោយសំឡេង (Voice-to-Voice):* ផ្ញើសារសំឡេង (Voice message) មកទីនេះ Bot នឹងស្ដាប់យល់ និងឆ្លើយតបជាសំឡេងមនុស្សពិតៗភ្លាមៗ (គាំទ្រទាំងភាសាខ្មែរ និងភាសាបរទេស)!\n"
                 "• 📸 *ផ្ញើរូបភាពលំហាត់* (ថតរូបពីសៀវភៅ ឬក្រដាសប្រឡង)\n"
                 "• ✍️ *សរសេរសំណួរ ឬសមីការ* ផ្ទាល់ចូលក្នុងប្រអប់សារ\n"
                 "• 🎨 *Render ចម្លើយជារូបភាព HD (KaTeX):* ១ លំហាត់ = ១ រូបភាពពេញទំព័រធំច្បាស់ រូបមន្តគណិតវិទ្យាមានភាគយក របារប្រភាគ និងភាគបែងត្រឹមត្រូវ ១០០%\n"
                 "• 🔬 ដោះស្រាយគ្រប់មុខវិជ្ជា៖ គណិត, រូប, គីមី, ជីវៈ, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...\n"
                 "• 💡 បង្ហាញរូបមន្ត គន្លឹះ និងជំហានដោះស្រាយច្បាស់ៗមួយជំហានម្តងៗ ព្រមទាំងចម្លើយចុងក្រោយពេញលេញ\n\n"
-                "🚀 *របៀបប្រើ៖* ផ្ញើសារសំឡេង ថតរូបលំហាត់ ឬវាយអត្ថបទសំណួរផ្ញើមកទីនេះភ្លាមៗ!\n\n"
+                "🚀 *របៀបប្រើ៖* ផ្ញើ Link វីដេអូ, ផ្ញើសារសំឡេង, ថតរូបលំហាត់ ឬវាយអត្ថបទសំណួរផ្ញើមកទីនេះភ្លាមៗ!\n\n"
                 "បញ្ជាបន្ថែម៖ /subjects (មុខវិជ្ជា) | /clear (លុបប្រវត្តិ) | /help (ជំនួយ) | /about (ព័ត៌មាន Bot)"
             )
             self.send_message(chat_id, welcome_msg, reply_to_message_id=message_id)
@@ -414,15 +577,20 @@ class TelegramBot:
         elif cmd in ["/help", "/help@yourbot"]:
             help_msg = (
                 "📖 *របៀបប្រើប្រាស់ Bot ឲ្យទទួលបានលទ្ធផលល្អបំផុត៖*\n\n"
-                "1️⃣ *ដោះស្រាយតាមរូបភាព (Photo):*\n"
+                "1️⃣ *ទាញយកវីដេអូគ្មាន Logo (HD):*\n"
+                "• ចម្លង Link ពី TikTok, Facebook (Reels/Watch), YouTube (Shorts/Video), CapCut ឬ Pinterest រួចផ្ញើចូលក្នុងប្រអប់សារ\n"
+                "• Bot នឹងទាញយកវីដេអូ .mp4 គ្មាន Watermark កម្រិត HD ជូនដោយស្វ័យប្រវត្តិ!\n\n"
+                "2️⃣ *ដោះស្រាយតាមរូបភាព (Photo):*\n"
                 "• ថតរូបលំហាត់ឲ្យចំ ត្រង់ និងមានពន្លឺគ្រប់គ្រាន់\n"
                 "• អាចសរសេរ Caption បន្ថែមប្រសិនបើចង់ឲ្យដោះស្រាយតែសំណួរណាជាក់លាក់ (ឧ. «ដោះស្រាយតែលំហាត់លេខ ៣»)\n\n"
-                "2️⃣ *ដោះស្រាយតាមអត្ថបទ (Text):*\n"
+                "3️⃣ *សន្ទនាដោយសំឡេង (Voice-to-Voice):*\n"
+                "• ចុច Record Voice និយាយសំណួរ ឬជជែកលេងជាភាសាខ្មែរ ឬភាសាបរទេស នោះ Bot នឹងឆ្លើយតបជាសំឡេងមនុស្សពិតៗមកវិញ\n\n"
+                "4️⃣ *ដោះស្រាយតាមអត្ថបទ (Text):*\n"
                 "• វាយប្រធានលំហាត់ ឬសំណួរចូលដោយផ្ទាល់\n"
                 "• អាចសួរបញ្ជាក់ចំណុចមិនយល់បន្ថែមបាន\n\n"
-                "3️⃣ *ទម្រង់រូបភាព Rendered HD:*\n"
+                "5️⃣ *ទម្រង់រូបភាព Rendered HD:*\n"
                 "• Bot នឹង Render ចម្លើយ ១ លំហាត់ = ១ រូបភាពកាតពណ៌សធំច្បាស់ពេញទំព័រ ដោយមានក្បាលលំហាត់ ជំហានដោះស្រាយ និងចម្លើយចុងក្រោយពេញលេញ មិនដាច់ពាក់កណ្តាលទីឡើយ!\n\n"
-                "💡 *ចំណាំ:* Bot ត្រូវបានរចនាឡើងដើម្បីពន្យល់ឲ្យយល់ មិនមែនគ្រាន់តែបង្ហាញចម្លើយរួចស្រេចនោះទេ!"
+                "💡 *ចំណាំ:* Bot ត្រូវបានរចនាឡើងដើម្បីពន្យល់ឲ្យយល់ និងជួយសម្រួលដល់ការសិក្សាស្រាវជ្រាវ!"
             )
             self.send_message(chat_id, help_msg, reply_to_message_id=message_id)
 

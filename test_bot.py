@@ -355,6 +355,132 @@ def test_voice_service_and_bot_voice_handling():
     print("✓ Voice service and bot voice handling test passed.")
 
 
+def test_video_downloader_detection_and_handling():
+    print("Testing video downloader URL detection, extraction routing, and bot fallback flows...")
+    from video_service import detect_video_url, extract_video_info
+
+    # 1. Test URL detection for all platforms
+    cases = [
+        ("https://www.tiktok.com/@creator/video/1234567890", "tiktok"),
+        ("https://vt.tiktok.com/ZSjR1yq8b/", "tiktok"),
+        ("https://vm.tiktok.com/ZGJHxXXXX/", "tiktok"),
+        ("https://www.facebook.com/reel/123456789", "facebook"),
+        ("https://fb.watch/mG21x8z/", "facebook"),
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube"),
+        ("https://youtube.com/shorts/5xX79_H1L9w", "youtube"),
+        ("https://youtu.be/dQw4w9WgXcQ", "youtube"),
+        ("https://www.capcut.com/t/Zs82X9vYk/", "capcut"),
+        ("https://www.capcut.com/template-detail/7123456789", "capcut"),
+        ("https://www.pinterest.com/pin/1140958943123847847/", "pinterest"),
+        ("https://pin.it/7a8b9c", "pinterest"),
+        ("គណនាលីមីត lim_{x -> 0} sin(x)/x", None),
+    ]
+
+    for text, expected in cases:
+        det = detect_video_url(text)
+        actual = det[1] if det else None
+        assert actual == expected, f"Expected {expected} for {text}, got {actual}"
+
+    # 2. Test Bot handling of Video Update - Step 1: Direct URL stream
+    bot = TelegramBot(token="fake_token")
+    captured_actions = []
+    captured_videos = []
+    captured_messages = []
+
+    bot.send_chat_action = lambda chat_id, action: captured_actions.append((chat_id, action))
+    bot.send_video = lambda chat_id, video, **kwargs: captured_videos.append((chat_id, video, kwargs)) or True
+    bot.send_message = lambda chat_id, text, **kwargs: captured_messages.append((chat_id, text, kwargs)) or True
+
+    import bot_core
+    original_extract = bot_core.extract_video_info
+    original_buffer = bot_core.fetch_video_buffer
+
+    try:
+        # Mock successful extraction
+        bot_core.extract_video_info = lambda url, platform: {
+            "success": True,
+            "direct_url": "https://cdn.tikwm.com/video/sample_hd.mp4",
+            "title": "Amazing Khmer Dance",
+            "author": "Sreypov Dance",
+            "platform": "TikTok",
+            "platform_code": "tiktok",
+            "quality": "HD (No Watermark)"
+        }
+
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 888},
+                "message_id": 101,
+                "text": "Check this video https://vt.tiktok.com/ZSjR1yq8b/ please"
+            }
+        })
+
+        # Verify upload_video chat action was dispatched
+        assert ("upload_video" in [a[1] for a in captured_actions])
+
+        # Verify send_video was called with direct streaming URL (Step 1)
+        assert len(captured_videos) == 1
+        chat_id_sent, video_payload, extra_kwargs = captured_videos[0]
+        assert chat_id_sent == 888
+        assert video_payload == "https://cdn.tikwm.com/video/sample_hd.mp4"
+        assert "Amazing Khmer Dance" in extra_kwargs.get("caption", "")
+        assert "TikTok" in extra_kwargs.get("caption", "")
+        assert "គ្មាន Watermark" in extra_kwargs.get("caption", "")
+
+        # 3. Test Bot handling - Step 2: Fallback to memory buffer when direct URL is rejected
+        captured_videos.clear()
+        captured_messages.clear()
+
+        # Step 1 fails, Step 2 succeeds
+        def mock_send_video(chat_id, video, **kwargs):
+            if isinstance(video, str):
+                return False  # Direct URL fails (e.g. hotlink restriction)
+            return True       # Buffer upload succeeds
+
+        bot.send_video = mock_send_video
+        bot_core.fetch_video_buffer = lambda url, max_bytes: (b"fake_mp4_bytes_in_ram", 15000000)
+
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 888},
+                "message_id": 102,
+                "text": "https://www.facebook.com/reel/123456789"
+            }
+        })
+
+        # 4. Test Bot handling - Step 3: Inline Keyboard fallback when file > 50MB
+        captured_videos.clear()
+        captured_messages.clear()
+
+        # Step 1 fails, Step 2 returns (None, 65000000) because size > 50MB
+        bot.send_video = lambda chat_id, video, **kwargs: False
+        bot_core.fetch_video_buffer = lambda url, max_bytes: (None, 65 * 1024 * 1024)
+
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 888},
+                "message_id": 103,
+                "text": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            }
+        })
+
+        assert len(captured_messages) == 1
+        msg_chat, msg_text, msg_kwargs = captured_messages[0]
+        assert msg_chat == 888
+        assert "50MB" in msg_text
+        reply_markup = msg_kwargs.get("reply_markup", {})
+        inline_kb = reply_markup.get("inline_keyboard", [[]])
+        assert len(inline_kb) > 0
+        assert "ទាញយកវីដេអូផ្ទាល់" in inline_kb[0][0]["text"]
+        assert inline_kb[0][0]["url"] == "https://cdn.tikwm.com/video/sample_hd.mp4"
+
+    finally:
+        bot_core.extract_video_info = original_extract
+        bot_core.fetch_video_buffer = original_buffer
+
+    print("✓ Video downloader detection, extraction routing, and 3-step fallback test passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -370,6 +496,7 @@ if __name__ == "__main__":
     test_api_handler_solution_route()
     test_math_formatting()
     test_voice_service_and_bot_voice_handling()
+    test_video_downloader_detection_and_handling()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")
