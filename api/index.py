@@ -52,25 +52,25 @@ class handler(BaseHTTPRequestHandler):
             return
 
         if "test_video" in query_params:
-            from video_service import extract_video_info
             v_url = query_params["test_video"][0]
-            debug_logs = []
+            trace_info = []
             try:
                 from pytubefix import YouTube
-                for c in ['ANDROID', 'MWEB', 'WEB']:
-                    try:
-                        yt = YouTube(v_url, client=c)
-                        stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
-                        debug_logs.append(f"{c}: stream={bool(stream)}")
-                    except Exception as ce:
-                        debug_logs.append(f"{c}: {type(ce).__name__} - {ce}")
-            except Exception as pe:
-                debug_logs.append(f"pytubefix_import: {pe}")
-            info = extract_video_info(v_url)
+                yt = YouTube(v_url, client='ANDROID')
+                stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+                if stream:
+                    trace_info.append(f"SUCCESS: url={stream.url[:60]}, size={stream.filesize}")
+                else:
+                    trace_info.append("No progressive stream found")
+            except Exception as e:
+                import traceback
+                trace_info.append(f"ERROR: {type(e).__name__}: {e}")
+                trace_info.append(traceback.format_exc())
+
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
-            res_data = {"test_url": v_url, "info": info, "debug": debug_logs}
+            res_data = {"test_url": v_url, "trace": trace_info}
             self.wfile.write(json.dumps(res_data, default=str).encode("utf-8"))
             return
 
