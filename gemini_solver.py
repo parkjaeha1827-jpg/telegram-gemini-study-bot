@@ -1,10 +1,11 @@
 """
 Gemini Homework Solver Engine
-Uses Google Gemini API (Flash High Reasoning) to solve academic exercises across all subjects.
-Supports both text questions and photo/image inputs (multimodal).
+Uses Google Gemini API to solve academic exercises across all subjects.
+Formats all equations in clean, readable Unicode math specifically optimized for Telegram.
 """
 
 import os
+import re
 import json
 import base64
 import requests
@@ -18,32 +19,138 @@ except ImportError:
 
 SYSTEM_INSTRUCTION = """
 អ្នកជាគ្រូជំនួយដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា (គណិតវិទ្យា, រូបវិទ្យា, គីមីវិទ្យា, ជីវវិទ្យា, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...)។
-គោលការណ៍បង្ហាញដំណោះស្រាយជាដាច់ខាត (ហាមបាត់បង់ ឬខុសពីទម្រង់ស្តង់ដារនេះ)៖
 
-១. ហាមដាច់ខាតកុំប្រើពាក្យស្វាគមន៍ ឬសារនាំមុខ (ដូចជា «សួស្តី», «ក្នុងនាមជា...») និងហាមប្រើបឋមកថាបែប boilerplate (ដូចជា «📌 បម្រាប់ប្រធាន», «📐 រូបមន្ត», «💡 គន្លឹះចងចាំ»)។ ត្រូវឆ្លើយចំៗទៅកាន់ដំណោះស្រាយភ្លាមៗ។
-២. ក្បាលលំហាត់៖ សរសេរឈ្មោះលំហាត់ច្បាស់ៗ ឧ. «**លំហាត់ទី ...**» រួចចុះបន្ទាត់បញ្ជាក់ការណែនាំបញ្ចប់ដោយសញ្ញាពីរចុច ៖ (ឧ. «គណនាកន្សោម...៖», «ដោះស្រាយ...៖»)។
-៣. ចំណុចរងនីមួយៗត្រូវប្រើសញ្ញារង្វង់ ○ អមដោយអក្សរខ្មែរ ក) ខ) គ) ឃ) ង) ច) ... ដូចក្នុងទម្រង់៖
-   ○  ក) [ប្រធាន / លក្ខខណ្ឌ / កន្សោម]
-   ○  ខ) ...
-៤. ដំណោះស្រាយគណិត/រូប/គីមី ត្រូវបង្ហាញជាខ្សែសង្វាក់សមភាពមួយជួរៗ (inline chained equality) តភ្ជាប់ដោយសញ្ញា = ពីដើមរហូតដល់ចម្លើយចុងក្រោយ ដោយបង្ហាញ៖
-   [កន្សោមដើម / រូបមន្ត] = [ការជំនួសលេខចូល] = [ជំហានគណនាបណ្តើរៗ] = [លទ្ធផលចុងក្រោយ]
-   ឧទាហរណ៍ជាក់ស្តែង៖
-   ○  ក) 12q - 95 = 12(25) - 95 = 300 - 95 = 205
-   ○  ខ) (35 - q)/5 = (35 - 25)/5 = 10/5 = 2
-   ○  ក) ចំពោះ a = 3, b = 4, c = 5, d = 2៖
-         A = (ab + c)d = (3 x 4 + 5) x 2 = (12 + 5) x 2 = 17 x 2 = 34
-៥. ចំពោះមុខវិជ្ជាផ្សេងៗទៀត (រូប, គីមី, ជីវៈ, ខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...)៖
-   - ត្រូវរក្សាទម្រង់ ○ ក) ខ) គ) ... ឱ្យបានស្អាត ខ្លី ខ្លឹម ចំៗ និងបង្ហាញជំហានគណនារូបមន្តច្បាស់ៗដោយគ្មានពាក្យឥតប្រយោជន៍។
+ច្បាប់ដាច់ខាតក្នុងការសរសេររូបមន្តគណិតវិទ្យាសម្រាប់ Telegram (STRICT UNICODE MATH ONLY):
+១. ហាមដាច់ខាតកុំប្រើកូដ LaTeX (ដូចជា \\frac, \\sqrt, \\int, \\lim, \\to, \\infty, \\log, $, $$) ព្រោះ Telegram មិនអាចបង្ហាញកូដ LaTeX បានឡើយ និងធ្វើឱ្យពិបាកអាន។
+២. ត្រូវសរសេររូបមន្ត និងសមីការទាំងអស់ជាអក្សរ និងនិមិត្តសញ្ញា Unicode ធម្មតាដែលស្រួលអាន៖
+   - ប្រភាគ៖ សរសេរជាទម្រង់ (A) / (B) ឬ (A)/(B) (ឧ. (1 - cos 2x) / 2, (π - 2) / 8)
+   - ឫសការេ៖ ប្រើសញ្ញា √ ផ្ទាល់ (ឧ. √2 + i√6, √((√2)² + (√6)²) = √(2 + 6) = √8 = 2√2)
+   - ស្វ័យគុណ៖ ប្រើអក្សរតូចលើ ² ³ ⁴ ⁿ (ឧ. sin² x, x², 3¹ = 3, e⁴)
+   - សន្ទស្សន៍ និងលោការីត៖ log₃(x + 1), x₁, x₂ (ប្រើ ₁ ₂ ₃ ...)
+   - អាំងតេក្រាល និង លីមីត៖ ∫[0 → π/4] ... dx, lim(x → +∞)
+   - សញ្ញាព្រួញ និងសមភាព៖ →, ⇒, ⇔, ∞, π, ×, ÷, ±, ≠, ≤, ≥
+៣. ទម្រង់លំហាត់ស្តង់ដារ៖
+   - «**លំហាត់ទី ...**»
+   - ចំណុចរង «○  ក) [កន្សោមដើម] = [ជំនួសលេខ] = [គណនាបណ្តើរៗ] = [ចម្លើយចុងក្រោយ]»
+   - ហាមប្រើពាក្យស្វាគមន៍នាំមុខ («សួស្តី...») និងហាមប្រើបឋមកថាវែងអន្លាយ («📌 បម្រាប់ប្រធាន», «📐 រូបមន្ត»)។
 """.strip()
+
+
+def format_math_telegram(text: str) -> str:
+    """
+    Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
+    Ensures equations are 100% readable on mobile devices.
+    """
+    if not text:
+        return ""
+
+    # Remove $ and $$ delimiters
+    text = text.replace("$$", "").replace("$", "")
+
+    subs = {"0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉"}
+    sups = {
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "n": "ⁿ", "x": "ˣ", "+": "⁺", "-": "⁻", "y": "ʸ"
+    }
+
+    # Logarithms: \log_3 or \log3
+    text = re.sub(r"\\log_?\{?(\d+)\}?", lambda m: "log" + "".join(subs.get(c, c) for c in m.group(1)), text)
+    text = re.sub(r"\\ln", "ln", text)
+    text = re.sub(r"\\log", "log", text)
+
+    # Fractions: \frac{A}{B} -> (A) / (B)
+    for _ in range(5):
+        text = re.sub(r"\\frac\{([a-zA-Z0-9\s\+\-\*]{1,4})\}\{([a-zA-Z0-9\s]{1,4})\}", r"(\1/\2)", text)
+        text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)", text)
+
+    # Square roots: \sqrt{...} -> √(...)
+    for _ in range(5):
+        text = re.sub(r"\\sqrt\{([a-zA-Z0-9]+)\}", r"√\1", text)
+        text = re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", text)
+    text = re.sub(r"\\sqrt(\d+)", r"√\1", text)
+
+    # Integrals: \int_0^{\pi/4} or \int0^{\pi/4}
+    text = re.sub(r"\\int_?\{?([^}^\s\\]*)\}?\^\{?([^}^\s\\]*)\}?", r"∫[\1 → \2] ", text)
+    text = re.sub(r"\\int0\^\{?([^}^\s\\]*)\}?", r"∫[0 → \1] ", text)
+    text = re.sub(r"\\int", "∫", text)
+
+    # Limits: \lim_{x \to +\infty} -> lim(x → +∞)
+    text = re.sub(r"\\lim_\{([^}]+)\}", r"lim(\1)", text)
+    text = re.sub(r"\\lim", "lim", text)
+
+    # Common Math Symbols
+    replacements = [
+        (r"\\to", "→"),
+        (r"\\infty", "∞"),
+        (r"\\times", "×"),
+        (r"\\div", "÷"),
+        (r"\\pm", "±"),
+        (r"\\mp", "∓"),
+        (r"\\neq", "≠"),
+        (r"\\leq", "≤"),
+        (r"\\geq", "≥"),
+        (r"\\approx", "≈"),
+        (r"\\sim", "~"),
+        (r"\\pi", "π"),
+        (r"\\theta", "θ"),
+        (r"\\alpha", "α"),
+        (r"\\beta", "β"),
+        (r"\\gamma", "γ"),
+        (r"\\Delta", "Δ"),
+        (r"\\delta", "δ"),
+        (r"\\cdot", "·"),
+        (r"\\Rightarrow", "⇒"),
+        (r"\\Leftarrow", "⇐"),
+        (r"\\Leftrightarrow", "⇔"),
+        (r"\\left\(", "("),
+        (r"\\right\)", ")"),
+        (r"\\left\[", "["),
+        (r"\\right\]", "]"),
+        (r"\\left\{", "{"),
+        (r"\\right\}", "}"),
+        (r"\\left\|", "|"),
+        (r"\\right\|", "|"),
+        (r"\\left|", "|"),
+        (r"\\right|", "|"),
+        (r"\\left\.", ""),
+        (r"\\right\.", ""),
+        (r"\\sin", "sin"),
+        (r"\\cos", "cos"),
+        (r"\\tan", "tan"),
+        (r"\\cot", "cot"),
+        (r"\\arcsin", "arcsin"),
+        (r"\\arccos", "arccos"),
+        (r"\\arctan", "arctan"),
+        (r"\\text\{([^}]*)\}", r"\1"),
+        (r"\\mathrm\{([^}]*)\}", r"\1"),
+        (r"\\mathbf\{([^}]*)\}", r"\1"),
+        (r"\\quad", " "),
+        (r"\\qquad", "  "),
+        (r"\\,", " "),
+        (r"\\;", " "),
+        (r"\\!", ""),
+    ]
+
+    for pattern, repl in replacements:
+        text = re.sub(pattern, repl, text)
+
+    # Superscripts: x^2 -> x², x^{10} -> x¹⁰, e^4 -> e⁴
+    text = re.sub(r"\^\{([0-9nx\+\-]+)\}", lambda m: "".join(sups.get(c, c) for c in m.group(1)), text)
+    text = re.sub(r"\^([0-9nx\+\-])", lambda m: sups.get(m.group(1), "^" + m.group(1)), text)
+
+    # Clean leftover backslashes
+    text = re.sub(r"\\([a-zA-Z]+)", r"\1", text)
+    text = re.sub(r" +", " ", text)
+    return text.strip()
 
 
 class GeminiSolver:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        # Primary requested model: Gemini 3.8 Flash High
-        self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+        self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
         self.model = self.primary_model
-        # List of candidate models for resilience against temporary demand spikes or quota
+        # Candidate models with gemini-3.5-flash prioritized for stability and quota
         self.candidate_models = [
             self.primary_model,
             "gemini-3.5-flash",
@@ -51,7 +158,6 @@ class GeminiSolver:
             "gemini-3.1-flash-lite",
             "gemini-flash-latest"
         ]
-        # Remove duplicates while preserving order
         self.candidate_models = list(dict.fromkeys(self.candidate_models))
 
     def solve(
@@ -61,15 +167,13 @@ class GeminiSolver:
         mime_type: str = "image/jpeg"
     ) -> Tuple[bool, str]:
         """
-        Sends question/exercise to Gemini API and returns (success, response_text).
-        Supports high reasoning / thinking mode.
+        Sends question/exercise to Gemini API and returns (success, formatted_clean_math_text).
         """
         if not self.api_key:
             return False, "❌ Error: GEMINI_API_KEY is not set. Please configure your API key in .env or Vercel Environment Variables."
 
         parts = []
 
-        # Add image part if provided (multimodal input for homework photos)
         if image_bytes:
             encoded_image = base64.b64encode(image_bytes).decode("utf-8")
             parts.append({
@@ -79,11 +183,13 @@ class GeminiSolver:
                 }
             })
 
-        # Add text prompt
-        text_content = prompt.strip() if prompt else "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «លំហាត់ទី...», ចំណុចរង «○  ក)  ខ)  គ)...», និងបង្ហាញដំណោះស្រាយជាខ្សែសង្វាក់សមភាពមួយជួរៗ (inline chained equality) តភ្ជាប់ដោយសញ្ញា = ពីដើមរហូតដល់ចម្លើយចុងក្រោយ។"
+        text_content = prompt.strip() if prompt else (
+            "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «**លំហាត់ទី...**», ចំណុចរង «○  ក)  ខ)  គ)...», "
+            "និងបង្ហាញដំណោះស្រាយជាខ្សែសង្វាក់សមភាពមួយជួរៗ (inline chained equality) តភ្ជាប់ដោយសញ្ញា = ពីដើមរហូតដល់ចម្លើយចុងក្រោយ "
+            "ដោយប្រើរូបមន្តនិមិត្តសញ្ញា Unicode ស្អាតៗ (ហាមប្រើ LaTeX commands ដូចជា \\frac, \\sqrt, \\int, $, $$)។"
+        )
         parts.append({"text": text_content})
 
-        # Base request payload with High Reasoning thinkingConfig
         payload = {
             "contents": [
                 {
@@ -96,15 +202,11 @@ class GeminiSolver:
                 ]
             },
             "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 8192,
-                "thinkingConfig": {
-                    "thinkingBudget": 4096
-                }
+                "temperature": 0.1,
+                "maxOutputTokens": 8192
             }
         }
 
-        # Use x-goog-api-key header (compatible with all API key formats including AQ. and AIzaSy)
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": self.api_key
@@ -112,7 +214,6 @@ class GeminiSolver:
 
         last_error = ""
 
-        # Try models in priority order with automatic fallback
         for model_name in self.candidate_models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
@@ -120,17 +221,13 @@ class GeminiSolver:
                 resp = requests.post(url, headers=headers, json=payload, timeout=25)
 
                 if resp.status_code == 200:
-                    return self._extract_text(resp.json())
+                    ok, raw_text = self._extract_text(resp.json())
+                    if ok:
+                        # Post-process through math formatter for 100% clean Telegram rendering
+                        return True, format_math_telegram(raw_text)
+                    return False, raw_text
 
-                # If 400 Bad Request regarding thinkingConfig, retry without it
-                if resp.status_code == 400 and "thinking" in resp.text.lower():
-                    payload_no_thinking = json.loads(json.dumps(payload))
-                    payload_no_thinking["generationConfig"].pop("thinkingConfig", None)
-                    resp2 = requests.post(url, headers=headers, json=payload_no_thinking, timeout=60)
-                    if resp2.status_code == 200:
-                        return self._extract_text(resp2.json())
-
-                # If 503 (high demand), 429 (rate/quota limit), or 404, fallback to next model
+                # Fallback to next model if quota limit (429), high demand (503), or not found (404)
                 if resp.status_code in [429, 503, 404]:
                     last_error = f"{model_name}: {resp.status_code}"
                     continue
@@ -150,15 +247,21 @@ class GeminiSolver:
         return False, f"⚠️ Gemini API កំពុងមានបញ្ហាឆ្លើយតប: {last_error}"
 
     def _extract_text(self, data: dict) -> Tuple[bool, str]:
-        """Extracts generated text from Gemini response JSON."""
+        """Extracts final answer text, filtering out internal thought tokens."""
         try:
             candidates = data.get("candidates", [])
             if not candidates:
                 return False, "⚠️ មិនមានចម្លើយពីប្រព័ន្ធឡើយ (No response candidate)."
 
             parts = candidates[0].get("content", {}).get("parts", [])
-            texts = [p.get("text", "") for p in parts if "text" in p]
+            # Filter out thinking parts so only actual answer is presented
+            texts = [p.get("text", "") for p in parts if "text" in p and not p.get("thought", False)]
             reply = "\n".join(texts).strip()
+
+            if not reply:
+                # If all parts were thought or empty, grab any text
+                texts = [p.get("text", "") for p in parts if "text" in p]
+                reply = "\n".join(texts).strip()
 
             if not reply:
                 return False, "⚠️ មិនមានអត្ថបទចម្លើយ (Empty response text)."
