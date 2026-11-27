@@ -113,7 +113,10 @@ def clean_text_for_tts(text: str) -> str:
     # 6. Remove Markdown formatting (*, _, #, `, ~)
     cleaned = re.sub(r'[*_#`~]', '', cleaned)
 
-    # 7. Remove Emojis and decorative symbols
+    # 7. Remove musical symbols and notes
+    cleaned = re.sub(r'[🎶🎵🎤🎼🎻🎸🎹🎺🥁]', '', cleaned)
+
+    # 8. Remove Emojis and decorative symbols
     emoji_pattern = re.compile(
         "[\U00010000-\U0010ffff]|"
         "[\uD800-\uDBFF][\uDC00-\uDFFF]|"
@@ -122,7 +125,7 @@ def clean_text_for_tts(text: str) -> str:
     )
     cleaned = emoji_pattern.sub('', cleaned)
 
-    # 8. Clean redundant hyphens, slashes, or symbols that sound weird when read aloud
+    # 9. Clean redundant hyphens, slashes, or symbols that sound weird when read aloud
     cleaned = re.sub(r'[-–—]{2,}', ' ', cleaned)
     cleaned = re.sub(r'[\r\n\t]+', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
@@ -130,13 +133,43 @@ def clean_text_for_tts(text: str) -> str:
     return cleaned
 
 
+def is_expressive_mode(text: str) -> bool:
+    """
+    Detects if the text is a poem, story, song, or expressive narrative
+    that should be spoken at a slightly slower, melodious tempo (-8%).
+    """
+    if not text:
+        return False
+    expressive_keywords = [
+        "កំណាព្យ", "បទពាក្យ", "កាកគតិ", "ពំនោល", "បថ្យាវត្ត", "ព្រហ្មគីតិ",
+        "រឿងព្រេង", "និទាន", "កាលពីព្រេងនាយ", "តំណាលថា", "រឿងខ្មោច",
+        "ច្រៀង", "ទំនុកច្រៀង", "ចង្វាក់", "កន្ទ្រឹម", "រ៉េប", "ចម្រៀង",
+        "🎶", "🎵", "🎤", "🎼", "🎻", "🎸"
+    ]
+    for kw in expressive_keywords:
+        if kw in text:
+            return True
+    return False
+
+
 def sanitize_text_for_tts(text: str) -> str:
     """Wrapper ensuring backward compatibility with previous calls."""
     return clean_text_for_tts(text)
 
 
-async def text_to_speech_async(text: str, voice: Optional[str] = None) -> Optional[bytes]:
-    """Generates natural spoken audio bytes using Microsoft Edge TTS."""
+async def text_to_speech_async(
+    text: str,
+    voice: Optional[str] = None,
+    rate: Optional[str] = None
+) -> Optional[bytes]:
+    """
+    Generates natural spoken audio bytes using Microsoft Edge TTS.
+    Supports dynamic speaking rate (e.g. -8% for expressive poetry, storytelling, and songs).
+    """
+    # Detect expressive rate before stripping musical notes and keywords
+    if rate is None:
+        rate = "-8%" if is_expressive_mode(text) else "+0%"
+
     clean_text = sanitize_text_for_tts(text)
     if not clean_text:
         return None
@@ -148,7 +181,7 @@ async def text_to_speech_async(text: str, voice: Optional[str] = None) -> Option
     # Try selected voice with fallback
     for target_voice in [voice, "km-KH-SreymomNeural", "en-US-AvaNeural"]:
         try:
-            communicate = edge_tts.Communicate(clean_text, target_voice)
+            communicate = edge_tts.Communicate(clean_text, target_voice, rate=rate)
             audio_data = b""
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
@@ -162,10 +195,14 @@ async def text_to_speech_async(text: str, voice: Optional[str] = None) -> Option
     return None
 
 
-def text_to_speech(text: str, voice: Optional[str] = None) -> Optional[bytes]:
+def text_to_speech(
+    text: str,
+    voice: Optional[str] = None,
+    rate: Optional[str] = None
+) -> Optional[bytes]:
     """Synchronous wrapper for text_to_speech_async."""
     try:
-        return asyncio.run(text_to_speech_async(text, voice))
+        return asyncio.run(text_to_speech_async(text, voice=voice, rate=rate))
     except Exception as e:
         print(f"[EdgeTTS Error] {e}")
         return None

@@ -632,6 +632,99 @@ def test_search_grounding_and_persistent_memory():
     print("✓ Google Search Grounding and persistent memory sync passed.")
 
 
+def test_cambodia_datetime_and_astrology_instructions():
+    print("Testing Cambodia dynamic datetime and astrology/folklore system instructions...")
+    from gemini_solver import get_cambodia_now, get_cambodia_datetime_context, SYSTEM_INSTRUCTION
+    from unittest.mock import patch, MagicMock
+
+    # 1. Test Cambodia Date and Time
+    now = get_cambodia_now()
+    assert now is not None
+    ctx = get_cambodia_datetime_context()
+    assert "Asia/Phnom_Penh" in ctx
+    assert "UTC+7" in ctx
+    assert str(now.year) in ctx
+
+    # 2. Test 4 capability groups in SYSTEM_INSTRUCTION
+    assert "ក្បួនហោរាសាស្ត្រ និងទស្សន៍ទាយ" in SYSTEM_INSTRUCTION
+    assert "កាត់យល់សប្តិ" in SYSTEM_INSTRUCTION
+    assert "មើលក្បួនអាយុ" in SYSTEM_INSTRUCTION
+    assert "មើលជើងលេខប្រចាំថ្ងៃ" in SYSTEM_INSTRUCTION
+
+    assert "ក្បួនដោះស្រាយបញ្ហា" in SYSTEM_INSTRUCTION
+
+    assert "អក្សរសិល្ប៍ និងល្បែងប្រាជ្ញា" in SYSTEM_INSTRUCTION
+    assert "ពាក្យបណ្ដៅខ្មែរ" in SYSTEM_INSTRUCTION
+    assert "ពាក្យសុភាសិត ខ្មែរ អង់គ្លេស និងចិន" in SYSTEM_INSTRUCTION
+    assert "ពាក្យគន្លាស់កាត់" in SYSTEM_INSTRUCTION
+    assert "ក្លាផាច់" in SYSTEM_INSTRUCTION  # spoonerism sample: កាច់ផ្កា -> ក្លាផាច់
+
+    assert "សិល្បៈតែងនិពន្ធ និងកម្សាន្ត" in SYSTEM_INSTRUCTION
+    assert "តែងកំណាព្យខ្មែរ" in SYSTEM_INSTRUCTION
+    assert "និទានរឿង" in SYSTEM_INSTRUCTION
+    assert "ច្រៀងចម្រៀង" in SYSTEM_INSTRUCTION
+
+    # 3. Test dynamic instruction injection in GeminiSolver.solve payload
+    solver = GeminiSolver(api_key="fake_key", model="gemini-2.5-pro")
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "រាសីថ្ងៃនេះល្អណាស់!"}]}}]
+        }
+        ok, res = solver.solve("មើលជើងលេខថ្ងៃនេះ", chat_id=12345)
+        assert ok is True
+        assert mock_post.called
+        sent_payload = mock_post.call_args[1]["json"]
+        sys_text = sent_payload["systemInstruction"]["parts"][0]["text"]
+        assert "Asia/Phnom_Penh" in sys_text
+        assert "កាលបរិច្ឆេទ និងម៉ោងជាក់ស្ដែងនៅកម្ពុជា" in sys_text
+
+    print("✓ Cambodia dynamic datetime and astrology/folklore system instructions passed.")
+
+
+def test_expressive_tts_and_music_notes():
+    print("Testing Expressive Edge TTS (tempo -8% and music note stripping)...")
+    from voice_service import clean_text_for_tts, is_expressive_mode, text_to_speech_async
+    import asyncio
+    from unittest.mock import patch, MagicMock
+
+    # 1. Test clean_text_for_tts strips musical notes and emojis
+    raw_song = "🎶 ស្រឡាញ់ស្រីខ្មៅ មិនខ្វល់ពីអ្នកណា 🎵🎤 ព្រោះចិត្តស្មោះត្រង់ 🎼"
+    clean_song = clean_text_for_tts(raw_song)
+    assert "🎶" not in clean_song
+    assert "🎵" not in clean_song
+    assert "🎤" not in clean_song
+    assert "🎼" not in clean_song
+    assert "ស្រឡាញ់ស្រីខ្មៅ មិនខ្វល់ពីអ្នកណា ព្រោះចិត្តស្មោះត្រង់" in clean_song
+
+    # 2. Test is_expressive_mode detection
+    assert is_expressive_mode("សូមនិទានរឿងព្រេងខ្មែរឱ្យស្តាប់") is True
+    assert is_expressive_mode("សូត្រកំណាព្យបទពាក្យ៧") is True
+    assert is_expressive_mode("🎶 ច្រៀងមួយបទមក 🎶") is True
+    assert is_expressive_mode("គណនាអាំងតេក្រាលពី ០ ទៅ ១") is False
+
+    # 3. Mock edge_tts to verify rate='-8%' on expressive mode
+    mock_comm = MagicMock()
+    async def mock_stream():
+        yield {"type": "audio", "data": b"mock_expressive_audio"}
+    mock_comm.stream = mock_stream
+
+    with patch("edge_tts.Communicate", return_value=mock_comm) as mock_edge:
+        audio = asyncio.run(text_to_speech_async("🎶 និទានរឿងព្រេងមួយ 🎶"))
+        assert audio == b"mock_expressive_audio"
+        assert mock_edge.called
+        call_kwargs = mock_edge.call_args[1]
+        assert call_kwargs.get("rate") == "-8%"
+
+    with patch("edge_tts.Communicate", return_value=mock_comm) as mock_edge_chat:
+        audio2 = asyncio.run(text_to_speech_async("សួស្តីបង សុខសប្បាយទេ?"))
+        assert audio2 == b"mock_expressive_audio"
+        call_kwargs2 = mock_edge_chat.call_args[1]
+        assert call_kwargs2.get("rate") == "+0%"
+
+    print("✓ Expressive Edge TTS (tempo -8% and music note stripping) passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -651,6 +744,8 @@ if __name__ == "__main__":
     test_clean_unwanted_thai()
     test_capcut_detection_and_extraction()
     test_search_grounding_and_persistent_memory()
+    test_cambodia_datetime_and_astrology_instructions()
+    test_expressive_tts_and_music_notes()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")
