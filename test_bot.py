@@ -24,11 +24,11 @@ from renderer import (
 
 def test_gemini_solver_init():
     print("Testing GeminiSolver initialization and Smart Dual-Mode instructions...")
-    solver = GeminiSolver(api_key="test_key", model="gemini-2.5-pro")
+    solver = GeminiSolver(api_key="test_key", model="gemini-3.1-flash-lite")
     assert solver.api_key == "test_key"
-    assert solver.model == "gemini-2.5-pro"
-    assert "gemini-2.5-pro" in solver.candidate_models
-    assert "gemini-2.0-flash" in solver.candidate_models
+    assert solver.model == "gemini-3.1-flash-lite"
+    assert "gemini-3.1-flash-lite" in solver.candidate_models
+    assert "gemini-3.5-flash-lite" in solver.candidate_models
     assert solver.memory.max_messages == 20
     assert "Smart Dual-Mode" in SYSTEM_INSTRUCTION
     assert "ACADEMIC & EXAM MODE" in SYSTEM_INSTRUCTION
@@ -597,15 +597,15 @@ def test_capcut_detection_and_extraction():
 
 def test_search_grounding_and_persistent_memory():
     print("Testing Google Search Grounding tool payload and persistent memory sync...")
-    solver = GeminiSolver(api_key="test_api_key", model="gemini-2.5-pro")
-    assert solver.primary_model == "gemini-2.5-pro"
-    assert "gemini-2.5-pro" in solver.candidate_models
-    assert "gemini-2.0-flash" in solver.candidate_models
-    assert "gemini-1.5-flash" in solver.candidate_models
+    solver = GeminiSolver(api_key="test_api_key", model="gemini-3.1-flash-lite")
+    assert solver.primary_model == "gemini-3.1-flash-lite"
+    assert "gemini-3.1-flash-lite" in solver.candidate_models
+    assert "gemini-3.5-flash-lite" in solver.candidate_models
+    assert "gemini-flash-lite-latest" in solver.candidate_models
 
-    # Verify that legacy/obsolete models map to gemini-2.5-pro
-    legacy_solver = GeminiSolver(api_key="test_api_key", model="gemini-3.5-flash-lite")
-    assert legacy_solver.primary_model == "gemini-2.5-pro"
+    # Verify that deprecated 404 models map to gemini-3.1-flash-lite
+    legacy_solver = GeminiSolver(api_key="test_api_key", model="gemini-1.5-flash-8b")
+    assert legacy_solver.primary_model == "gemini-3.1-flash-lite"
 
     # Verify ChatMemory remote KV sync mocks
     from unittest.mock import patch, MagicMock
@@ -670,7 +670,7 @@ def test_cambodia_datetime_and_astrology_instructions():
     assert "ច្រៀងចម្រៀង" in SYSTEM_INSTRUCTION
 
     # 3. Test dynamic instruction injection in GeminiSolver.solve payload
-    solver = GeminiSolver(api_key="fake_key", model="gemini-2.5-pro")
+    solver = GeminiSolver(api_key="fake_key", model="gemini-3.1-flash-lite")
     with patch("requests.post") as mock_post:
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = {

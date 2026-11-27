@@ -457,7 +457,7 @@ def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
     # 1. Primary: pytubefix (pure Python with Android / MWEB client)
     try:
         from pytubefix import YouTube
-        for client_name in ['ANDROID', 'MWEB']:
+        for client_name in ['ANDROID', 'MWEB', 'WEB', 'IOS']:
             try:
                 yt = YouTube(url, client=client_name)
                 raw_title = yt.title or "YouTube Video"
@@ -497,6 +497,7 @@ def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
 
     if video_id:
         invidious_instances = [
+            "https://yt.chocolatemoo53.com",
             "https://inv.nadeko.net",
             "https://yewtu.be",
             "https://invidious.nerdvpn.de",

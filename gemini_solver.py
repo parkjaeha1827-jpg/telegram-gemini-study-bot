@@ -515,19 +515,22 @@ def clean_unwanted_thai(text: str) -> str:
 class GeminiSolver:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        raw_model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
-        if raw_model in ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3-pro", "gemini-3.1-flash-lite", "gemini-3.5-flash"]:
-            raw_model = "gemini-2.5-pro"
+        raw_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+        deprecated_404 = [
+            "gemini-1.5-flash-8b", "gemini-1.5-flash", "gemini-1.5-pro",
+            "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"
+        ]
+        if raw_model in deprecated_404:
+            raw_model = "gemini-3.1-flash-lite"
         self.primary_model = raw_model
         self.model = self.primary_model
         self.candidate_models = [
             self.primary_model,
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-1.5-flash-8b"
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3.1-pro-preview",
+            "gemini-flash-latest"
         ]
         self.candidate_models = list(dict.fromkeys(self.candidate_models))
         self.memory = ChatMemory(max_messages=20)
@@ -627,7 +630,7 @@ class GeminiSolver:
         last_error = ""
 
         for model_name in self.candidate_models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
 
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -691,6 +694,9 @@ class GeminiSolver:
 
         if "429" in str(last_error):
             return False, "⚠️ ប្រព័ន្ធកំពុងមានអ្នកប្រើប្រាស់ច្រើនក្នុងពេលតែមួយ (Rate limit / Quota)។ សូមមេត្តារង់ចាំប្រហែល ៣០ វិនាទី រួចសាកល្បងផ្ញើសារម្ដងទៀត។"
+
+        if "503" in str(last_error):
+            return False, "⚠️ ម៉ាស៊ីនបម្រើការកំពុងមមាញឹកខ្លាំង (High Server Demand)។ សូមមេត្តារង់ចាំបន្តិច រួចផ្ញើសារម្ដងទៀត។"
 
         return False, f"⚠️ Gemini API កំពុងមានបញ្ហាឆ្លើយតប: {last_error}"
 
