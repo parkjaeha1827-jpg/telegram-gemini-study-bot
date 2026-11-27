@@ -163,7 +163,7 @@ class TelegramBot:
                 return
 
             success, answer = self.solver.solve(
-                prompt=caption or "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះមួយជំហានម្តងៗឲ្យបានលម្អិត និងបង្ហាញរូបមន្តច្បាស់ៗ។",
+                prompt=caption or "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «លំហាត់ទី...», ចំណុចរង «○  ក)  ខ)  គ)...», និងបង្ហាញដំណោះស្រាយជាខ្សែសង្វាក់សមភាពមួយជួរៗ (inline chained equality) តភ្ជាប់ដោយសញ្ញា = ពីដើមរហូតដល់ចម្លើយចុងក្រោយ។",
                 image_bytes=image_bytes,
                 mime_type="image/jpeg"
             )
