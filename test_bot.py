@@ -6,6 +6,7 @@ Verifies imports, classes, commands, KaTeX rendering, card splitting, and soluti
 import os
 import sys
 import io
+import json
 
 # Ensure local directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -22,12 +23,18 @@ from renderer import (
 
 
 def test_gemini_solver_init():
-    print("Testing GeminiSolver initialization and living personality instructions...")
-    solver = GeminiSolver(api_key="test_key", model="gemini-3.5-flash-lite")
+    print("Testing GeminiSolver initialization and Smart Dual-Mode instructions...")
+    solver = GeminiSolver(api_key="test_key", model="gemini-2.5-pro")
     assert solver.api_key == "test_key"
-    assert solver.model == "gemini-3.5-flash-lite"
+    assert solver.model == "gemini-2.5-pro"
+    assert "gemini-2.5-pro" in solver.candidate_models
+    assert "gemini-3-pro" in solver.candidate_models
     assert solver.memory.max_messages == 20
-    assert "ដោះស្រាយលំហាត់" in SYSTEM_INSTRUCTION
+    assert "Smart Dual-Mode" in SYSTEM_INSTRUCTION
+    assert "ACADEMIC & EXAM MODE" in SYSTEM_INSTRUCTION
+    assert "REALISTIC HUMAN & SASSY PERSONA" in SYSTEM_INSTRUCTION
+    assert "មាត្រាច្បាប់" in SYSTEM_INSTRUCTION
+    assert "វិញ្ញាសាប្រឡង" in SYSTEM_INSTRUCTION
     assert r"\frac" in SYSTEM_INSTRUCTION
     # Emotional personality rules
     assert "នែ៎" in SYSTEM_INSTRUCTION or "ឆឹស" in SYSTEM_INSTRUCTION
@@ -37,7 +44,7 @@ def test_gemini_solver_init():
     assert "ប្ដូរភាសាស្វ័យប្រវត្តិ" in SYSTEM_INSTRUCTION
     assert "ឆ្លើយតបជាសំឡេង" in SYSTEM_INSTRUCTION
     assert "ច្បាប់ហាមដាច់ខាតភាសាថៃ" in SYSTEM_INSTRUCTION
-    print("✓ GeminiSolver initialization & emotional personality rules passed.")
+    print("✓ GeminiSolver initialization & Smart Dual-Mode instructions passed.")
 
 
 def test_chat_memory():
@@ -302,33 +309,38 @@ def test_math_formatting():
 
 
 def test_voice_service_and_bot_voice_handling():
-    print("Testing voice service and bot voice message handling...")
-    from voice_service import detect_language, sanitize_text_for_tts
+    print("Testing voice service, clean_text_for_tts, and dual send...")
+    from voice_service import detect_language, sanitize_text_for_tts, clean_text_for_tts
 
     assert detect_language("សួស្តីបង") == "km"
     assert detect_language("Hello, how are you?") == "en"
     assert detect_language("你好") == "zh"
     assert detect_language("こんにちは") == "ja"
 
-    raw = "**នែ៎!** `សួស្តី` #1 ធ្វើអីហ្នឹង? ឆឹស! 😂❤️ $$x=2$$ https://google.com"
-    clean = sanitize_text_for_tts(raw)
+    raw = "<b>នែ៎!</b> `សួស្តី` #1 ធ្វើអីហ្នឹង? ឆឹស! 😂❤️ $$x=2$$ √16 = 4 https://google.com"
+    clean = clean_text_for_tts(raw)
     assert "*" not in clean
     assert "#" not in clean
     assert "`" not in clean
+    assert "<b>" not in clean
     assert "https" not in clean
     assert "នែ៎!" in clean
     assert "ឆឹស!" in clean
+    assert "ឫសការ៉េនៃ" in clean
+    assert "ស្មើនឹង" in clean
 
-    # Test Bot handling of incoming voice update
+    # Test Bot handling of incoming voice update - Standard casual voice reply
     bot = TelegramBot(token="fake_token")
     captured_actions = []
     captured_voices = []
+    captured_messages = []
 
     bot.send_chat_action = lambda chat_id, action: captured_actions.append((chat_id, action))
     bot.get_file_bytes = lambda file_id: b"fake_ogg_opus_audio"
     bot.send_voice = lambda chat_id, voice_bytes, caption=None, reply_to_message_id=None: captured_voices.append((chat_id, len(voice_bytes))) or True
+    bot.send_message = lambda chat_id, text, **kwargs: captured_messages.append((chat_id, text)) or True
 
-    # Mock solver.solve to return a spoken response
+    # 1. Casual chat voice turn
     bot.solver.solve = lambda **kwargs: (True, "សួស្តី! ខ្ញុំកំពុងឆ្លើយតបជាសំឡេង។")
 
     import bot_core
@@ -351,9 +363,39 @@ def test_voice_service_and_bot_voice_handling():
         assert len(captured_voices) == 1
         assert captured_voices[0][0] == 777
         assert captured_voices[0][1] > 0
+
+        # 2. Long academic/exam solution voice turn (Dual Send: HTML text in chat + voice note)
+        captured_voices.clear()
+        captured_messages.clear()
+        academic_answer = (
+            "<b>វិញ្ញាសាប្រឡងគ្រូ៖ មាត្រា ៣១ នៃរដ្ឋធម្មនុញ្ញ</b>\n\n"
+            "○ ដំណាក់កាលទី ១៖ ព្រះរាជាណាចក្រកម្ពុជា ទទួលស្គាល់ និងគោរពសិទ្ធិមនុស្ស...\n"
+            "○ ដំណាក់កាលទី ២៖ ប្រជាពលរដ្ឋខ្មែរមានភាពស្មើគ្នាចំពោះមុខច្បាប់ ដោយគ្មានការរើសអើង...\n"
+            "រូបមន្តគណិតវិទ្យា៖ $x = \\frac{-b \\pm \\sqrt{\\Delta}}{2a}$\n\n"
+            "ចម្លើយត្រឹមត្រូវគឺ គ. ស្មើភាពគ្នាចំពោះមុខច្បាប់"
+        )
+        bot.solver.solve = lambda **kwargs: (True, academic_answer)
+
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 777},
+                "message_id": 100,
+                "voice": {
+                    "file_id": "voice_file_exam",
+                    "duration": 5
+                }
+            }
+        })
+
+        # Dual send: Both text message AND voice message are delivered
+        assert len(captured_messages) == 1
+        assert "វិញ្ញាសាប្រឡងគ្រូ" in captured_messages[0][1]
+        assert len(captured_voices) == 1
+        assert captured_voices[0][0] == 777
+
     finally:
         bot_core.text_to_speech = original_tts
-    print("✓ Voice service and bot voice handling test passed.")
+    print("✓ Voice service, clean_text_for_tts, and dual send passed.")
 
 
 def test_video_downloader_detection_and_handling():
@@ -553,6 +595,43 @@ def test_capcut_detection_and_extraction():
     print("✓ CapCut URL detection and SSR extraction passed.")
 
 
+def test_search_grounding_and_persistent_memory():
+    print("Testing Google Search Grounding tool payload and persistent memory sync...")
+    solver = GeminiSolver(api_key="test_api_key", model="gemini-2.5-pro")
+    assert solver.primary_model == "gemini-2.5-pro"
+    assert "gemini-2.5-pro" in solver.candidate_models
+    assert "gemini-3-pro" in solver.candidate_models
+
+    # Verify ChatMemory remote KV sync mocks
+    from unittest.mock import patch, MagicMock
+    mem = ChatMemory(max_messages=10)
+    mem.kv_url = "https://test-kv.upstash.io"
+    mem.kv_token = "fake_kv_token"
+
+    mock_kv_resp = MagicMock()
+    mock_kv_resp.status_code = 200
+    mock_kv_resp.json.return_value = {
+        "result": json.dumps([
+            {"role": "user", "parts": [{"text": "មាត្រា ៣១ ចែងពីអ្វី?"}]},
+            {"role": "model", "parts": [{"text": "ចែងអំពីសិទ្ធិស្មើគ្នានៃប្រជាពលរដ្ឋខ្មែរ"}]}
+        ])
+    }
+
+    test_chat_id = 88888
+    mem.clear(test_chat_id)
+
+    with patch("requests.get", return_value=mock_kv_resp), patch("requests.post") as mock_post:
+        history = mem.get_history(test_chat_id)
+        assert len(history) == 2
+        assert "មាត្រា ៣១" in history[0]["parts"][0]["text"]
+
+        # Add turn and verify remote set
+        mem.add_turn(test_chat_id, "តើពិតមែនទេ?", "ពិតប្រាកដណាស់!")
+        assert mock_post.called
+
+    print("✓ Google Search Grounding and persistent memory sync passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -571,6 +650,7 @@ if __name__ == "__main__":
     test_video_downloader_detection_and_handling()
     test_clean_unwanted_thai()
     test_capcut_detection_and_extraction()
+    test_search_grounding_and_persistent_memory()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

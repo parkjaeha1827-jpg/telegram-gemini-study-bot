@@ -476,9 +476,12 @@ class TelegramBot:
                 return
 
             voice_prompt = caption or (
-                "ស្តាប់សារសំឡេងនេះ ហើយឆ្លើយតបខ្លីៗ ធម្មជាតិ ដូចមនុស្សពិតកំពុងជជែកគ្នាតាមទូរស័ព្ទដៃ។ "
-                "ច្បាប់ភាសា៖ បើអ្នកនិយាយនិយាយភាសាខ្មែរ ត្រូវតបជាភាសាខ្មែរ បើនិយាយភាសាបរទេស ត្រូវតបជាភាសាបរទេសនោះវិញភ្លាមៗ។ "
-                "សំខាន់បំផុត៖ ហាមប្រើសញ្ញា Markdown (*, #, `) ឬ Emoji ក្នុងចម្លើយដាច់ខាត ដើម្បីកុំឱ្យម៉ាស៊ីនអានសំឡេងអានឈ្មោះសញ្ញាទាំងនោះ។"
+                "ស្ដាប់ និងបំប្លែងសំឡេង (ភាសាខ្មែរ ឬភាសាបរទេស) ឱ្យបានគ្រប់ម៉ាត់ជាមុនសិន "
+                "រួចវិភាគថាតើអ្នកសួរកំពុងសួរមេរៀន/ច្បាប់/ពេទ្យ/វិញ្ញាសាប្រឡង ឬកំពុងជជែកលេង៖\n"
+                "១. បើជាសំណួរមេរៀន ច្បាប់ ពេទ្យ ឬវិញ្ញាសាប្រឡង៖ ត្រូវឆ្លើយឱ្យបានត្រឹមត្រូវ ១០០% ច្បាស់លាស់ តាមជំហាន គ្មានការស្មានឡើយ។\n"
+                "២. បើជាការជជែកលេងទូទៅ៖ ឆ្លើយតបខ្លីៗ ធម្មជាតិ រស់រវើក មានអារម្មណ៍ដូចមនុស្សពិតៗ (ចេះលួងលោម ឌឺដង ឬស្ដីបន្ទោសតាមសមរម្យ)។\n"
+                "៣. ច្បាប់ភាសា៖ បើអ្នកនិយាយនិយាយភាសាខ្មែរ ត្រូវតបជាភាសាខ្មែរ។ បើនិយាយភាសាបរទេស ត្រូវតបជាភាសាបរទេសនោះវិញភ្លាមៗ។\n"
+                "៤. សំខាន់បំផុត៖ ហាមប្រើសញ្ញា Markdown (*, #, `) ឬ Emoji ក្នុងចម្លើយដាច់ខាត ដើម្បីកុំឱ្យម៉ាស៊ីនអានសំឡេងអានឈ្មោះសញ្ញាទាំងនោះ។"
             )
 
             mime_type = "audio/ogg" if voice else "audio/mp3"
@@ -494,14 +497,28 @@ class TelegramBot:
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
                 return
 
-            self.send_chat_action(chat_id, "record_voice")
-            speech_bytes = text_to_speech(answer)
-            if speech_bytes:
-                sent = self.send_voice(chat_id, speech_bytes, reply_to_message_id=message_id)
-                if not sent:
-                    self.send_message(chat_id, answer, reply_to_message_id=message_id)
-            else:
+            # Check if this is a long academic/lesson answer
+            is_long_academic = len(answer) > 280 or any(kw in answer for kw in ["ដំណាក់កាល", "រូបមន្ត", "មាត្រា", "ច្បាប់", "សមីការ", "\\frac", "$"])
+
+            if is_long_academic:
+                # Dual send: Send full formatted text in chat AND concise voice summary
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
+
+                # Create a clean spoken text for voice audio
+                spoken_text = answer[:260].rsplit(' ', 1)[0] + "..." if len(answer) > 260 else answer
+                self.send_chat_action(chat_id, "record_voice")
+                speech_bytes = text_to_speech(spoken_text)
+                if speech_bytes:
+                    self.send_voice(chat_id, speech_bytes, reply_to_message_id=message_id)
+            else:
+                self.send_chat_action(chat_id, "record_voice")
+                speech_bytes = text_to_speech(answer)
+                if speech_bytes:
+                    sent = self.send_voice(chat_id, speech_bytes, reply_to_message_id=message_id)
+                    if not sent:
+                        self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                else:
+                    self.send_message(chat_id, answer, reply_to_message_id=message_id)
             return
 
         # Handle Photo (Homework Image)

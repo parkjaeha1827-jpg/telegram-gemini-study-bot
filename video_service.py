@@ -56,11 +56,11 @@ URL_PATTERNS = {
         re.IGNORECASE
     ),
     "youtube": re.compile(
-        r'https?://(?:www\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/)[^\s<>"\'`]+|youtu\.be/[^\s<>"\'`]+)',
+        r'https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?v=|shorts/|embed/|v/)[^\s<>"\'`]+|youtu\.be/[^\s<>"\'`]+)',
         re.IGNORECASE
     ),
     "capcut": re.compile(
-        r'https?://(?:www\.|mobile\.)?(?:capcut\.com|capcutshare\.com|capcut\.net)/(?:t/|tv2/|template-detail/|watch/|s/|templates/)[^\s<>"\'`]+',
+        r'https?://(?:www\.|mobile\.)?(?:capcut\.com|capcutshare\.com|capcut\.net)/(?:t/|tv2/|template-detail|watch/|s/|templates/|@[^\s/]+/video/)[^\s<>"\'`]*',
         re.IGNORECASE
     ),
     "pinterest": re.compile(
@@ -265,8 +265,13 @@ def extract_capcut_video(url: str) -> Optional[Dict[str, Any]]:
                 try:
                     data = json.loads(m_modern.group(1))
                     loader_data = data.get("loaderData", {})
-                    root = loader_data.get("$", {}) or {}
-                    td = root.get("templateDetail", {})
+                    td = {}
+                    for val in loader_data.values():
+                        if isinstance(val, dict) and "templateDetail" in val:
+                            td = val["templateDetail"]
+                            break
+                    if not td:
+                        td = loader_data.get("$", {}).get("templateDetail", {})
                     sd = td.get("structuredData") or {}
 
                     direct_url = td.get("videoUrl") or sd.get("contentUrl")
@@ -449,36 +454,40 @@ def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
     Extracts direct MP4 video stream from YouTube video or Shorts
     using pytubefix (pure Python) with Invidious/Cobalt fallbacks.
     """
-    # 1. Primary: pytubefix (pure Python with Android client)
+    # 1. Primary: pytubefix (pure Python with Android / MWEB client)
     try:
         from pytubefix import YouTube
-        yt = YouTube(url, client='ANDROID')
-        raw_title = yt.title or "YouTube Video"
-        raw_author = yt.author or "YouTube Creator"
-        title = clean_unwanted_thai(raw_title) or "YouTube Video"
-        author = clean_unwanted_thai(raw_author) or "YouTube Creator"
+        for client_name in ['ANDROID', 'MWEB']:
+            try:
+                yt = YouTube(url, client=client_name)
+                raw_title = yt.title or "YouTube Video"
+                raw_author = yt.author or "YouTube Creator"
+                title = clean_unwanted_thai(raw_title) or "YouTube Video"
+                author = clean_unwanted_thai(raw_author) or "YouTube Creator"
 
-        # Prioritize progressive mp4 (video + audio in single stream)
-        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-        if not stream:
-            stream = yt.streams.get_highest_resolution()
+                # Prioritize progressive mp4 (video + audio in single stream)
+                stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+                if not stream:
+                    stream = yt.streams.get_highest_resolution()
 
-        if stream and stream.url:
-            quality = stream.resolution or "HD"
-            filesize = getattr(stream, 'filesize', None)
-            return {
-                "success": True,
-                "direct_url": stream.url,
-                "title": title,
-                "author": author,
-                "platform": "YouTube",
-                "platform_code": "youtube",
-                "quality": f"{quality} (No Watermark)",
-                "size": filesize,
-                "original_url": url
-            }
+                if stream and stream.url:
+                    quality = stream.resolution or "HD"
+                    filesize = getattr(stream, 'filesize', None)
+                    return {
+                        "success": True,
+                        "direct_url": stream.url,
+                        "title": title,
+                        "author": author,
+                        "platform": "YouTube",
+                        "platform_code": "youtube",
+                        "quality": f"{quality} (No Watermark)",
+                        "size": filesize,
+                        "original_url": url
+                    }
+            except Exception as client_err:
+                print(f"[video_service] pytubefix ({client_name}) exception: {client_err}")
     except Exception as e:
-        print(f"[video_service] pytubefix exception: {e}")
+        print(f"[video_service] pytubefix import exception: {e}")
 
     # 2. Fallback: Extract video ID & query Invidious instances
     video_id = None
@@ -571,20 +580,24 @@ def fetch_video_buffer(
     if yt_url:
         try:
             from pytubefix import YouTube
-            yt = YouTube(yt_url, client='ANDROID')
-            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-            if not stream:
-                stream = yt.streams.get_highest_resolution()
-            if stream:
-                filesize = getattr(stream, 'filesize', 0)
-                if filesize and filesize > 50 * 1024 * 1024:
-                    return None, filesize
-                buffer = io.BytesIO()
-                stream.stream_to_buffer(buffer)
-                val = buffer.getvalue()
-                if len(val) > max_bytes:
-                    return None, len(val)
-                return val, len(val)
+            for client_name in ['ANDROID', 'MWEB']:
+                try:
+                    yt = YouTube(yt_url, client=client_name)
+                    stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+                    if not stream:
+                        stream = yt.streams.get_highest_resolution()
+                    if stream:
+                        filesize = getattr(stream, 'filesize', 0)
+                        if filesize and filesize > 50 * 1024 * 1024:
+                            return None, filesize
+                        buffer = io.BytesIO()
+                        stream.stream_to_buffer(buffer)
+                        val = buffer.getvalue()
+                        if len(val) > max_bytes:
+                            return None, len(val)
+                        return val, len(val)
+                except Exception as client_err:
+                    print(f"[video_service] pytubefix buffer ({client_name}) error: {client_err}")
         except Exception as e:
             print(f"[video_service] pytubefix stream_to_buffer error: {e}")
 
