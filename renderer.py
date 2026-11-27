@@ -2,6 +2,7 @@
 HTML/KaTeX to PNG Image Renderer
 Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, large, full-width PNG images.
 Refined typography for comfortable reading where all detailed steps and final answers are visible.
+Features multi-engine fallback (Microlink -> Thum.io -> S-Shot) so rate limits never block rendering.
 """
 
 import os
@@ -267,30 +268,56 @@ def get_solution_html(markdown_text: str) -> str:
 def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[bytes]:
     """
     Renders solution markdown (Khmer + KaTeX LaTeX) into a high-DPI, full-width PNG image.
-    Uses headless Chromium via Microlink API targeting the Vercel solution renderer endpoint.
+    Uses multi-engine pipeline:
+      1. Microlink API (Retina 2x, crispest)
+      2. Thum.io API (Free, high-speed, no rate limits)
+      3. Mini s-shot API (Emergency fallback)
     """
     try:
         payload = encode_solution_payload(markdown_text)
         solution_url = f"{VERCEL_HOST}/solution?c={payload}"
 
-        microlink_params = {
-            "url": solution_url,
-            "screenshot": "true",
-            "embed": "screenshot.url",
-            "element": "#solution-card",
-            "viewport.width": "800",
-            "viewport.deviceScaleFactor": "2",
-            "waitForTimeout": "1000"
-        }
+        # 1. Try Microlink (Retina 2x)
+        try:
+            microlink_params = {
+                "url": solution_url,
+                "screenshot": "true",
+                "embed": "screenshot.url",
+                "element": "#solution-card",
+                "viewport.width": "800",
+                "viewport.deviceScaleFactor": "2",
+                "waitForTimeout": "1000"
+            }
+            query_string = urllib.parse.urlencode(microlink_params)
+            api_url = f"https://api.microlink.io/?{query_string}"
+            resp = requests.get(api_url, timeout=12)
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                return resp.content
+            print(f"[Renderer Microlink Status] {resp.status_code}")
+        except Exception as e:
+            print(f"[Renderer Microlink Error] {e}")
 
-        query_string = urllib.parse.urlencode(microlink_params)
-        api_url = f"https://api.microlink.io/?{query_string}"
+        # 2. Fallback to Thum.io (fast, reliable, free, no rate limits)
+        try:
+            thum_url = f"https://image.thum.io/get/width/720/noanimate/{solution_url}"
+            resp = requests.get(thum_url, timeout=18)
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                return resp.content
+            print(f"[Renderer Thum Status] {resp.status_code}")
+        except Exception as e:
+            print(f"[Renderer Thum Error] {e}")
 
-        resp = requests.get(api_url, timeout=timeout)
-        if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
-            return resp.content
-        print(f"[Renderer Status] {resp.status_code}: {resp.text[:200]}")
+        # 3. Fallback to S-Shot
+        try:
+            sshot_url = f"https://mini.s-shot.ru/1024x768/PNG/720/?{solution_url}"
+            resp = requests.get(sshot_url, timeout=15)
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                return resp.content
+            print(f"[Renderer SShot Status] {resp.status_code}")
+        except Exception as e:
+            print(f"[Renderer SShot Error] {e}")
+
         return None
     except Exception as e:
-        print(f"[Renderer Error] {e}")
+        print(f"[Renderer General Error] {e}")
         return None
