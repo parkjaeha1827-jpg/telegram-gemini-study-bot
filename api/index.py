@@ -54,18 +54,20 @@ class handler(BaseHTTPRequestHandler):
         if "test_video" in query_params:
             v_url = query_params["test_video"][0]
             trace_info = []
-            try:
-                from pytubefix import YouTube
-                yt = YouTube(v_url, client='ANDROID')
-                stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
-                if stream:
-                    trace_info.append(f"SUCCESS: url={stream.url[:60]}, size={stream.filesize}")
-                else:
-                    trace_info.append("No progressive stream found")
-            except Exception as e:
-                import traceback
-                trace_info.append(f"ERROR: {type(e).__name__}: {e}")
-                trace_info.append(traceback.format_exc())
+            from pytubefix import YouTube
+            clients_to_test = [
+                'IOS', 'MWEB', 'WEB_SAFARI', 'ANDROID_TESTSUITE', 'ANDROID_MUSIC', 'TV', 'MEDIA_CONNECT'
+            ]
+            for cl in clients_to_test:
+                try:
+                    yt = YouTube(v_url, client=cl)
+                    stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+                    if stream:
+                        trace_info.append(f"{cl}: SUCCESS (res={stream.resolution})")
+                    else:
+                        trace_info.append(f"{cl}: No progressive stream")
+                except Exception as ce:
+                    trace_info.append(f"{cl}: {type(ce).__name__}")
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
