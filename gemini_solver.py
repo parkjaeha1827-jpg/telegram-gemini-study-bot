@@ -1,7 +1,9 @@
 """
 Gemini Homework Solver Engine
 Uses Google Gemini API to solve academic exercises across all subjects.
-Formats all equations in clean, readable Unicode math specifically optimized for Telegram.
+Formats all equations in clean, textbook-quality math specifically optimized for Telegram.
+All vertical fractions and multi-line equations are enclosed in Monospace code blocks (```)
+to guarantee perfect alignment on all mobile devices.
 """
 
 import os
@@ -9,7 +11,7 @@ import re
 import json
 import base64
 import requests
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 try:
     from dotenv import load_dotenv
@@ -20,57 +22,167 @@ except ImportError:
 SYSTEM_INSTRUCTION = """
 អ្នកជាគ្រូជំនួយដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា (គណិតវិទ្យា, រូបវិទ្យា, គីមីវិទ្យា, ជីវវិទ្យា, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...)។
 
-ច្បាប់ដាច់ខាតក្នុងការសរសេរប្រភាគ និងរូបមន្តគណិតវិទ្យា (STRICT VERTICAL FRACTION ONLY):
-១. ច្បាប់ដាច់ខាតសម្រាប់ប្រភាគ (VERTICAL FRACTIONS):
-   - ហាមដាច់ខាតកុំប្រើសញ្ញាចែក / សម្រាប់ប្រភាគ (ដូចជា a/b ឬ (a)/(b))។
-   - រាល់ប្រភាគទាំងអស់ ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម។
+ច្បាប់ដាច់ខាតក្នុងការបង្ហាញរូបមន្ត និងប្រភាគសម្រាប់ Telegram (TELEGRAM CLEAN MATH RULES):
+១. ហាមប្រើ LaTeX commands (ដូចជា \\frac, \\sqrt, \\int, \\lim, $, $$) ជាដាច់ខាត ព្រោះ Telegram មិនគាំទ្រ LaTeX ឡើយ។
+២. ច្បាប់ដាច់ខាតសម្រាប់ប្រភាគ (VERTICAL FRACTIONS):
+   - ហាមដាច់ខាតកុំប្រើសញ្ញា / សម្រាប់ប្រភាគ (ដូចជា a/b ឬ (a)/(b))។
+   - ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម។
+   - រាល់ប្រភាគឈរ និងសមីការគណនាជាជួរ ត្រូវតែដាក់ក្នុងប្រអប់ Code block (```) ជានិច្ច ដើម្បីកុំឱ្យខូចជួរលើទូរស័ព្ទដៃ Telegram!
    - ឧទាហរណ៍ជាក់ស្តែង៖
-     ○  ខ) 
-        35 - q     35 - 25     10
-        ──────  =  ───────  =  ──  =  2
-          5           5         5
+     ○ **ក)**
+     ```
+     12q - 95 = 12(25) - 95 = 300 - 95 = 205
+     ```
+     ○ **ខ)**
+     ```
+     35 - q     35 - 25     10
+     ──────  =  ───────  =  ──  =  2
+       5           5         5
+     ```
+     ○ **គ)**
+     ```
+     12q         12(25)
+     ─── + 30 =  ────── + 30 = 75 + 30 = 105
+      4            4
+     ```
+     ○ **ឃ)**
+     ```
+     15q + 75     15(25) + 75     375 + 75     450
+     ────────  =  ───────────  =  ────────  =  ───  =  15
+        30             30            30         30
+     ```
 
-     ○  គ) 
-        12q         12(25)
-        ─── + 30  =  ────── + 30  =  75 + 30  =  105
-         4            4
+៣. សម្រាប់លំហាត់អាំងតេក្រាល លីមីត ឬដេរីវេ (CALCULUS & ALGEBRA):
+   - ដាក់រូបមន្ត និងជំហានគណនាទាំងអស់ក្នុងប្រអប់ Code block (```) មួយៗយ៉ាងស្អាត។
+   - ហាមគូរតង្កៀបកម្ពស់ច្រើនជួរ (ដូចជា    ឬ ┌ │ └) ព្រោះវានឹងរត់ខុសជួរលើទូរស័ព្ទដៃ។ ត្រូវប្រើតង្កៀប [ ... ] ឬ ( ... ) ធម្មតា។
+   - ឧទាហរណ៍ជាក់ស្តែង៖
+     **លំហាត់ទី ២៥**
+     គណនាអាំងតេក្រាល I = ∫[0 → π/4] sin²(x) dx
 
-     ○  ឃ) 
-        15q + 75     15(25) + 75     375 + 75     450
-        ────────  =  ───────────  =  ────────  =  ───  =  15
-           30             30            30         30
+     **ដំណោះស្រាយ៖**
+     តាមរូបមន្តបន្ថយដឺក្រេ៖
+     ```
+               1 - cos 2x
+     sin²(x) = ──────────
+                   2
+     ```
+     នាំឱ្យ៖
+     ```
+           π/4  1 - cos 2x
+     I = ∫     ──────────── dx
+           0        2
 
-        1 - cos 2x
-        ──────────
-            2
+         1   π/4
+       = ─ ∫     (1 - cos 2x) dx
+         2   0
 
-២. ហាមប្រើកូដ LaTeX (ដូចជា \\frac, \\sqrt, \\int, \\lim, $, $$) ព្រោះ Telegram មិនគាំទ្រ LaTeX ឡើយ។ ត្រូវប្រើនិមិត្តសញ្ញា Unicode ស្អាតៗ៖
-   - ឫសការេ៖ √2, √6, √8 = 2√2
-   - ស្វ័យគុណ៖ ប្រើអក្សរតូចលើ ² ³ ⁴ ⁿ (ឧ. sin² x, x², 3¹ = 3, e⁴)
-   - សន្ទស្សន៍ និងលោការីត៖ log₃(x + 1), x₁, x₂ (ប្រើ ₁ ₂ ₃ ...)
-   - អាំងតេក្រាល និង លីមីត៖ ∫[0 → π/4], lim(x → +∞)
-   - សញ្ញាព្រួញ និងសមភាព៖ →, ⇒, ⇔, ∞, π, ×, ÷, ±, ≠, ≤, ≥
+         1 [        sin 2x ] π/4
+       = ─ [ x  -   ────── ]
+         2 [          2    ] 0
+     ```
+     ជំនួសព្រំដែន [0 → π/4]៖
+     ```
+         1 [ ( π      sin(2 × π/4) )   (      sin 0 ) ]
+       = ─ [ ( ─  -   ──────────── ) - ( 0  - ───── ) ]
+         2 [ ( 4           2       )   (        2   ) ]
 
-៣. ទម្រង់លំហាត់ស្តង់ដារ៖
+         1 [ ( π      sin(π/2) ) ]
+       = ─ [ ( ─  -   ──────── ) ]
+         2 [ ( 4         2     ) ]
+
+         1 [ π   1 ]
+       = ─ [ ─ - ─ ]
+         2 [ 4   2 ]
+
+         1 [ π - 2 ]
+       = ─ [ ───── ]
+         2 [   4   ]
+
+         π - 2
+       = ─────
+           8
+     ```
+     👉 **ដូចនេះ៖**
+     ```
+         π - 2
+     I = ─────
+           8
+     ```
+
+៤. ទម្រង់លំហាត់ស្តង់ដារ៖
    - ក្បាលលំហាត់ «**លំហាត់ទី ...**»
-   - ចំណុចរង «○  ក) », «○  ខ) » ...
-   - ហាមប្រើពាក្យស្វាគមន៍នាំមុខ («សួស្តី...») និងហាមប្រើបឋមកថាវែងអន្លាយ («📌 បម្រាប់ប្រធាន», «📐 រូបមន្ត»)។
+   - ចំណុចរង «○ **ក)** », «○ **ខ)** » ...
+   - អត្ថបទពន្យល់ និងចំណងជើងជាភាសាខ្មែរធម្មតា នៅក្រៅប្រអប់ Code block ដើម្បីងាយស្រួលអាន។
+   - ហាមប្រើពាក្យស្វាគមន៍នាំមុខ («សួស្តី...») ចូលដោះស្រាយភ្លាមៗ។
 """.strip()
+
+
+def sanitize_brackets_and_symbols(text: str) -> str:
+    """Replaces broken multi-line bracket art characters with clean standard brackets."""
+    bad_chars = {
+        "": "(", "": " ", "": ")",
+        "⎛": "(", "⎜": " ", "⎝": ")",
+        "⎞": ")", "⎟": " ", "⎠": ")",
+        "┌": "[", "┐": "]", "└": "[", "┘": "]",
+        "│": " ", "┃": " ", "║": " "
+    }
+    for k, v in bad_chars.items():
+        text = text.replace(k, v)
+    return text
+
+
+def wrap_orphan_fraction_blocks(text: str) -> str:
+    """
+    Ensures any vertical fraction lines (containing ───) outside of code blocks
+    are properly wrapped in ``` code blocks so Telegram renders them in monospace.
+    """
+    if "───" not in text and "───" not in text:
+        return text
+
+    parts = text.split("```")
+    for idx in range(len(parts)):
+        # Even indices are outside code blocks
+        if idx % 2 == 0:
+            lines = parts[idx].split("\n")
+            new_lines = []
+            j = 0
+            while j < len(lines):
+                line = lines[j]
+                if "───" in line or "───" in line:
+                    # Gather block: 1-2 lines before, current line, 1-2 lines after
+                    block = []
+                    # Previous non-header line as numerator/expression
+                    if new_lines and new_lines[-1].strip() and not any(k in new_lines[-1] for k in ["លំហាត់", "ដំណោះស្រាយ", "○", "👉", "**"]):
+                        block.append(new_lines.pop())
+                    block.append(line)
+                    # Next line as denominator
+                    if j + 1 < len(lines) and lines[j+1].strip() and not any(k in lines[j+1] for k in ["លំហាត់", "ដំណោះស្រាយ", "○", "👉", "**"]):
+                        block.append(lines[j+1])
+                        j += 1
+                    new_lines.append("```\n" + "\n".join(block) + "\n```")
+                else:
+                    new_lines.append(line)
+                j += 1
+            parts[idx] = "\n".join(new_lines)
+
+    return "```".join(parts)
 
 
 def format_math_telegram(text: str) -> str:
     """
     Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
-    Converts fractions into true vertical fractions with a top, horizontal fraction bar ───, and bottom.
-    Never uses slash / for fractions and avoids regex pipe syntax errors.
+    Enforces clean vertical fractions in monospace blocks, eliminating broken proportional-font ASCII art.
     """
     if not text:
         return ""
 
-    # 1. Remove $ and $$ delimiters
+    # 1. Clean multi-line bracket art
+    text = sanitize_brackets_and_symbols(text)
+
+    # 2. Remove $ and $$ delimiters
     text = text.replace("$$", "").replace("$", "")
 
-    # 2. Fixed string replacements (safe from regex escaping issues)
+    # 3. Fixed string replacements for LaTeX
     string_replacements = [
         ("\\left(", "("), ("\\right)", ")"),
         ("\\left[", "["), ("\\right]", "]"),
@@ -106,13 +218,13 @@ def format_math_telegram(text: str) -> str:
     text = re.sub(r"\\ln", "ln", text)
     text = re.sub(r"\\log", "log", text)
 
-    # Fractions: \frac{A}{B} -> Vertical fraction with top, ───, and bottom (NO /)
+    # Fractions: \frac{A}{B} -> Vertical fraction wrapped in code block
     def to_vert_fraction(m):
         num = m.group(1).strip()
         den = m.group(2).strip()
         width = max(len(num), len(den)) + 2
         bar = "─" * width
-        return f"\n {num.center(width)}\n {bar}\n {den.center(width)}\n"
+        return f"\n```\n{num.center(width)}\n{bar}\n{den.center(width)}\n```\n"
 
     for _ in range(5):
         text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", to_vert_fraction, text)
@@ -123,7 +235,7 @@ def format_math_telegram(text: str) -> str:
         text = re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", text)
     text = re.sub(r"\\sqrt(\d+)", r"√\1", text)
 
-    # Integrals: \int_0^{\pi/4} or \int0^{\pi/4}
+    # Integrals: \int_0^{\pi/4} -> ∫[0 → π/4]
     text = re.sub(r"\\int_?\{?([^}^\s\\]*)\}?\^\{?([^}^\s\\]*)\}?", r"∫[\1 → \2] ", text)
     text = re.sub(r"\\int0\^\{?([^}^\s\\]*)\}?", r"∫[0 → \1] ", text)
     text = re.sub(r"\\int", "∫", text)
@@ -143,7 +255,13 @@ def format_math_telegram(text: str) -> str:
 
     # Clean any lingering lone backslashes
     text = re.sub(r"\\([a-zA-Z]+)", r"\1", text)
-    text = re.sub(r"[ ]{2,}", " ", text)
+
+    # Ensure any raw multi-line fractions outside code blocks get wrapped in ```
+    text = wrap_orphan_fraction_blocks(text)
+
+    # Clean consecutive duplicate code block markers ``` ```
+    text = re.sub(r"```\s*```", "", text)
+
     return text.strip()
 
 
@@ -152,11 +270,11 @@ class GeminiSolver:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
         self.model = self.primary_model
-        # Candidate models with gemini-3.5-flash prioritized for stability and quota
+        # Candidate models with gemini-3.5-flash prioritized for stability, reasoning, and quota
         self.candidate_models = [
             self.primary_model,
             "gemini-3.5-flash",
-            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
             "gemini-3.1-flash-lite",
             "gemini-flash-latest"
         ]
@@ -186,8 +304,9 @@ class GeminiSolver:
             })
 
         text_content = prompt.strip() if prompt else (
-            "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «**លំហាត់ទី...**», ចំណុចរង «○  ក)  ខ)  គ)...», "
-            "រាល់ប្រភាគទាំងអស់ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម (ហាមប្រើសញ្ញា / សម្រាប់ប្រភាគជាដាច់ខាត) "
+            "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «**លំហាត់ទី...**», ចំណុចរង «○  **ក)**  **ខ)**  **គ)**...», "
+            "រាល់ប្រភាគ និងការគណនាសមីការទាំងអស់ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម "
+            "ហើយត្រូវដាក់ក្នុងប្រអប់ Code block (```) ជានិច្ច ដើម្បីកុំឱ្យរត់ខុសជួរលើទូរស័ព្ទ (ហាមប្រើសញ្ញា / សម្រាប់ប្រភាគជាដាច់ខាត) "
             "និងប្រើរូបមន្តនិមិត្តសញ្ញា Unicode ស្អាតៗ (ហាមប្រើ LaTeX commands ដូចជា \\frac, \\sqrt, \\int, $, $$)។"
         )
         parts.append({"text": text_content})
@@ -220,7 +339,7 @@ class GeminiSolver:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=25)
+                resp = requests.post(url, headers=headers, json=payload, timeout=45)
 
                 if resp.status_code == 200:
                     ok, raw_text = self._extract_text(resp.json())

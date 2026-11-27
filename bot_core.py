@@ -89,23 +89,37 @@ class TelegramBot:
             return None
 
     def _chunk_message(self, text: str, max_chars: int = 3900) -> List[str]:
-        """Splits long text into clean chunks at line breaks."""
+        """
+        Splits long text into clean chunks at line breaks.
+        Maintains open code block (```) state across chunks so Markdown parsing never fails.
+        """
         if len(text) <= max_chars:
             return [text]
 
         chunks = []
         current = []
         current_len = 0
+        in_code_block = False
 
         for line in text.split("\n"):
+            is_code_toggle = line.strip().startswith("```")
             line_len = len(line) + 1
+
             if current_len + line_len > max_chars:
                 if current:
-                    chunks.append("\n".join(current))
-                    current = [line]
-                    current_len = line_len
+                    chunk_text = "\n".join(current)
+                    if in_code_block:
+                        chunk_text += "\n```"
+                    chunks.append(chunk_text)
+
+                    # Start new chunk continuing code block if needed
+                    if in_code_block:
+                        current = ["```", line]
+                        current_len = 4 + line_len
+                    else:
+                        current = [line]
+                        current_len = line_len
                 else:
-                    # Line itself is longer than max_chars
                     chunks.append(line[:max_chars])
                     current = [line[max_chars:]]
                     current_len = len(current[0])
@@ -113,8 +127,14 @@ class TelegramBot:
                 current.append(line)
                 current_len += line_len
 
+            if is_code_toggle:
+                in_code_block = not in_code_block
+
         if current:
-            chunks.append("\n".join(current))
+            chunk_text = "\n".join(current)
+            if in_code_block:
+                chunk_text += "\n```"
+            chunks.append(chunk_text)
 
         return chunks
 
@@ -141,7 +161,7 @@ class TelegramBot:
         # Handle Photo (Homework Image)
         if photo:
             self.send_chat_action(chat_id, "typing")
-            
+
             # Select highest resolution photo (last in the list)
             best_photo = photo[-1]
             file_id = best_photo.get("file_id")
@@ -162,8 +182,15 @@ class TelegramBot:
                 )
                 return
 
+            default_photo_prompt = (
+                "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «**លំហាត់ទី...**», ចំណុចរង «○  **ក)**  **ខ)**  **គ)**...», "
+                "រាល់ប្រភាគ និងការគណនាសមីការទាំងអស់ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម "
+                "ហើយត្រូវដាក់ក្នុងប្រអប់ Code block (```) ជានិច្ច ដើម្បីកុំឱ្យរត់ខុសជួរលើទូរស័ព្ទ (ហាមប្រើសញ្ញា / សម្រាប់ប្រភាគជាដាច់ខាត) "
+                "និងប្រើរូបមន្តនិមិត្តសញ្ញា Unicode ស្អាតៗ (ហាមប្រើ LaTeX commands ដូចជា \\frac, \\sqrt, \\int, $, $$)។"
+            )
+
             success, answer = self.solver.solve(
-                prompt=caption or "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះតាមទម្រង់ស្តង់ដារ៖ «**លំហាត់ទី...**», ចំណុចរង «○  ក)  ខ)  គ)...», រាល់ប្រភាគទាំងអស់ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកនៅខាងលើ របារប្រភាគ ─── នៅកណ្តាល និងភាគបែងនៅខាងក្រោម (ហាមប្រើសញ្ញា / សម្រាប់ប្រភាគជាដាច់ខាត) និងប្រើរូបមន្តនិមិត្តសញ្ញា Unicode ស្អាតៗ (ហាមប្រើ LaTeX commands ដូចជា \\frac, \\sqrt, \\int, $, $$)។",
+                prompt=caption or default_photo_prompt,
                 image_bytes=image_bytes,
                 mime_type="image/jpeg"
             )
@@ -227,7 +254,7 @@ class TelegramBot:
             self.send_message(chat_id, subjects_msg, reply_to_message_id=message_id)
 
         elif cmd in ["/about", "/about@yourbot"]:
-            active_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+            active_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
             about_msg = (
                 "🤖 *អំពី Telegram Study Bot:*\n\n"
                 f"• *ម៉ូដែល AI:* Google {active_model} (High Reasoning)\n"

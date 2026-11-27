@@ -81,6 +81,26 @@ def test_vercel_webhook_import():
     print("✓ Vercel Webhook handler passed.")
 
 
+def test_math_formatting():
+    print("Testing math formatting and fraction wrapping...")
+    from gemini_solver import format_math_telegram
+
+    raw_latex = r"គណនា $I = \int_0^{\pi/4} \sin^2 x dx$ តាមរូបមន្ត $\frac{1 - \cos 2x}{2}$"
+    formatted = format_math_telegram(raw_latex)
+    assert "$" not in formatted
+    assert r"\frac" not in formatted
+    assert r"\sin" not in formatted
+    assert r"\cos" not in formatted
+    assert "```" in formatted  # Vertical fraction was wrapped in code block
+    assert "───" in formatted
+
+    # Test orphan fraction wrapping
+    orphan = "○ **ខ)**\n 35 - q\n ──────\n   5"
+    wrapped = format_math_telegram(orphan)
+    assert "```" in wrapped
+    print("✓ Math formatting and fraction wrapping test passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -89,6 +109,7 @@ if __name__ == "__main__":
     test_message_chunking()
     test_command_handling_mock()
     test_vercel_webhook_import()
+    test_math_formatting()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")
