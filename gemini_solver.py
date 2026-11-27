@@ -62,13 +62,37 @@ def format_math_telegram(text: str) -> str:
     """
     Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
     Converts fractions into true vertical fractions with a top, horizontal fraction bar ───, and bottom.
-    Never uses slash / for fractions.
+    Never uses slash / for fractions and avoids regex pipe syntax errors.
     """
     if not text:
         return ""
 
-    # Remove $ and $$ delimiters
+    # 1. Remove $ and $$ delimiters
     text = text.replace("$$", "").replace("$", "")
+
+    # 2. Fixed string replacements (safe from regex escaping issues)
+    string_replacements = [
+        ("\\left(", "("), ("\\right)", ")"),
+        ("\\left[", "["), ("\\right]", "]"),
+        ("\\left{", "{"), ("\\right}", "}"),
+        ("\\left|", "|"), ("\\right|", "|"),
+        ("\\left\\|", "|"), ("\\right\\|", "|"),
+        ("\\left.", ""), ("\\right.", ""),
+        ("\\to", "→"), ("\\infty", "∞"),
+        ("\\times", "×"), ("\\div", "÷"),
+        ("\\pm", "±"), ("\\mp", "∓"),
+        ("\\neq", "≠"), ("\\leq", "≤"), ("\\geq", "≥"),
+        ("\\approx", "≈"), ("\\sim", "~"),
+        ("\\cdot", "·"),
+        ("\\Rightarrow", "⇒"), ("\\Leftarrow", "⇐"), ("\\Leftrightarrow", "⇔"),
+        ("\\pi", "π"), ("\\theta", "θ"), ("\\alpha", "α"), ("\\beta", "β"),
+        ("\\gamma", "γ"), ("\\Delta", "Δ"), ("\\delta", "δ"),
+        ("\\sin", "sin"), ("\\cos", "cos"), ("\\tan", "tan"), ("\\cot", "cot"),
+        ("\\arcsin", "arcsin"), ("\\arccos", "arccos"), ("\\arctan", "arctan"),
+        ("\\quad", " "), ("\\qquad", "  "), ("\\,", " "), ("\\;", " "), ("\\!", "")
+    ]
+    for s_from, s_to in string_replacements:
+        text = text.replace(s_from, s_to)
 
     subs = {"0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉"}
     sups = {
@@ -108,69 +132,18 @@ def format_math_telegram(text: str) -> str:
     text = re.sub(r"\\lim_\{([^}]+)\}", r"lim(\1)", text)
     text = re.sub(r"\\lim", "lim", text)
 
-    # Common Math Symbols
-    replacements = [
-        (r"\\to", "→"),
-        (r"\\infty", "∞"),
-        (r"\\times", "×"),
-        (r"\\div", "÷"),
-        (r"\\pm", "±"),
-        (r"\\mp", "∓"),
-        (r"\\neq", "≠"),
-        (r"\\leq", "≤"),
-        (r"\\geq", "≥"),
-        (r"\\approx", "≈"),
-        (r"\\sim", "~"),
-        (r"\\pi", "π"),
-        (r"\\theta", "θ"),
-        (r"\\alpha", "α"),
-        (r"\\beta", "β"),
-        (r"\\gamma", "γ"),
-        (r"\\Delta", "Δ"),
-        (r"\\delta", "δ"),
-        (r"\\cdot", "·"),
-        (r"\\Rightarrow", "⇒"),
-        (r"\\Leftarrow", "⇐"),
-        (r"\\Leftrightarrow", "⇔"),
-        (r"\\left\(", "("),
-        (r"\\right\)", ")"),
-        (r"\\left\[", "["),
-        (r"\\right\]", "]"),
-        (r"\\left\{", "{"),
-        (r"\\right\}", "}"),
-        (r"\\left\|", "|"),
-        (r"\\right\|", "|"),
-        (r"\\left|", "|"),
-        (r"\\right|", "|"),
-        (r"\\left\.", ""),
-        (r"\\right\.", ""),
-        (r"\\sin", "sin"),
-        (r"\\cos", "cos"),
-        (r"\\tan", "tan"),
-        (r"\\cot", "cot"),
-        (r"\\arcsin", "arcsin"),
-        (r"\\arccos", "arccos"),
-        (r"\\arctan", "arctan"),
-        (r"\\text\{([^}]*)\}", r"\1"),
-        (r"\\mathrm\{([^}]*)\}", r"\1"),
-        (r"\\mathbf\{([^}]*)\}", r"\1"),
-        (r"\\quad", " "),
-        (r"\\qquad", "  "),
-        (r"\\,", " "),
-        (r"\\;", " "),
-        (r"\\!", ""),
-    ]
-
-    for pattern, repl in replacements:
-        text = re.sub(pattern, repl, text)
+    # Clean text{} tags
+    text = re.sub(r"\\text\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\mathbf\{([^}]*)\}", r"\1", text)
 
     # Superscripts: x^2 -> x², x^{10} -> x¹⁰, e^4 -> e⁴
     text = re.sub(r"\^\{([0-9nx\+\-]+)\}", lambda m: "".join(sups.get(c, c) for c in m.group(1)), text)
     text = re.sub(r"\^([0-9nx\+\-])", lambda m: sups.get(m.group(1), "^" + m.group(1)), text)
 
-    # Clean leftover backslashes
+    # Clean any lingering lone backslashes
     text = re.sub(r"\\([a-zA-Z]+)", r"\1", text)
-    text = re.sub(r" +", " ", text)
+    text = re.sub(r"[ ]{2,}", " ", text)
     return text.strip()
 
 
