@@ -150,8 +150,8 @@ def test_bot_send_photo_and_fallback():
     bot._send_rendered_solution_or_text(chat_id=999, answer=sample_answer, message_id=10)
     assert len(captured_photos) == 2
     assert captured_photos[0][0] == 999
-    assert "(ភាគ 1/2)" in captured_photos[0][2]
-    assert "(ភាគ 2/2)" in captured_photos[1][2]
+    assert "២៥." in captured_photos[0][2]
+    assert "២៦." in captured_photos[1][2]
 
     # 2. When renderer returns None (fallback to text)
     bot_core.render_solution_to_png = lambda text: None

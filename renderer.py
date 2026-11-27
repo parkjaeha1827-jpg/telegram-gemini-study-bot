@@ -1,6 +1,7 @@
 """
 HTML/KaTeX to PNG Image Renderer
 Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, large, full-width PNG images.
+Strictly ensures: 1 Exercise = Exactly 1 Complete Image Page (Never truncated or cut off).
 """
 
 import os
@@ -29,49 +30,35 @@ def decode_solution_payload(encoded_str: str) -> str:
         return ""
 
 
-def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1200) -> List[str]:
+def split_solution_into_cards(markdown_text: str) -> List[str]:
     """
-    Splits multi-exercise solutions into individual exercise cards.
-    Guarantees each card has optimal aspect ratio (1:1 to 4:5) so Telegram
-    displays each image at FULL WIDTH with large, clear, readable text.
+    Splits multi-exercise solutions strictly by exercise boundary.
+    Guarantees: 1 Exercise = Exactly 1 Complete Image Page (Never truncated or split in half).
+    Each card contains the complete exercise from the title, steps, down to the final answer.
     """
     text = markdown_text.strip()
     if not text:
         return []
 
     # 1. First split by markdown horizontal rules: ---, ***, ___
-    raw_sections = [s.strip() for s in re.split(r'\n\s*[-*_]{3,}\s*\n', text) if s.strip()]
+    sections = [s.strip() for s in re.split(r'\n\s*[-*_]{3,}\s*\n', text) if s.strip()]
 
     # 2. If no horizontal rules, check for bold numbered exercise patterns:
-    # e.g. **២៥. or **25. or **លំហាត់ទី ២៥ or ## លំហាត់
-    if len(raw_sections) <= 1:
-        pattern = r'(?=\n\*\*(?:[០-៩\d]+\s*[\.\:\)]|លំហាត់[ទី\s]))'
+    # Matches: **២៥. or **25. or **លំហាត់ទី ២៥ or **លំហាត់ ២៥
+    if len(sections) <= 1:
+        pattern = r'(?=\n\s*\*\*(?:[០-៩\d]+\s*[\.\:\)]|លំហាត់[ទី\s]*[០-៩\d]+))'
         parts = [p.strip() for p in re.split(pattern, text) if p.strip()]
         if len(parts) > 1:
-            raw_sections = parts
+            sections = parts
 
-    # 3. Check if any section is still too long (> max_chars_per_card)
-    final_cards = []
-    for section in raw_sections:
-        if len(section) <= max_chars_per_card:
-            final_cards.append(section)
-        else:
-            paragraphs = section.split("\n\n")
-            current = []
-            current_len = 0
-            for p in paragraphs:
-                p_len = len(p) + 2
-                if current_len + p_len > max_chars_per_card and current:
-                    final_cards.append("\n\n".join(current))
-                    current = [p]
-                    current_len = p_len
-                else:
-                    current.append(p)
-                    current_len += p_len
-            if current:
-                final_cards.append("\n\n".join(current))
+    # 3. If still only 1 section, check for markdown headings:
+    if len(sections) <= 1:
+        pattern = r'(?=\n\s*#{1,3}\s+(?:[០-៩\d]+|លំហាត់))'
+        parts = [p.strip() for p in re.split(pattern, text) if p.strip()]
+        if len(parts) > 1:
+            sections = parts
 
-    return final_cards if final_cards else [text]
+    return sections if sections else [text]
 
 
 def get_solution_html(markdown_text: str) -> str:
