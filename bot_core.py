@@ -176,17 +176,35 @@ class TelegramBot:
 
         return chunks
 
+    def _is_academic_math_or_exercise(self, text: str) -> bool:
+        """Detects if text contains LaTeX math equations or structured exercise stages."""
+        if "$$" in text or r"\frac" in text or r"\int" in text or r"\sqrt" in text:
+            return True
+        if re.search(r'\$[^\$\n]{2,}\$', text):
+            return True
+        if "○ ដំណាក់កាល" in text or "ដំណាក់កាលទី" in text or "ចម្លើយត្រឹមត្រូវគឺ" in text:
+            return True
+        if re.search(r'\*\*(?:(?:លំហាត់|វិញ្ញាសា|[០-៩\d]+[\.\:\)]))', text):
+            return True
+        return False
+
     def _send_rendered_solution_or_text(
         self,
         chat_id: int,
         answer: str,
-        message_id: Optional[int] = None
+        message_id: Optional[int] = None,
+        force_photo: bool = False
     ) -> None:
         """
-        Attempts to render the solution into high-DPI KaTeX images (strictly 1 card per exercise)
-        and sends via sendPhoto so each exercise is 1 complete page with head and final answer intact.
-        Falls back to formatted Telegram text message if rendering fails or times out.
+        Sends conversational chat messages directly as natural text.
+        For academic exercises or LaTeX math, renders into high-DPI KaTeX images (1 card per exercise)
+        and sends via sendPhoto. Falls back to formatted Telegram text if rendering fails.
         """
+        # If it's natural conversation (not homework/math), reply immediately with clean text
+        if not force_photo and not self._is_academic_math_or_exercise(answer):
+            self.send_message(chat_id, answer, reply_to_message_id=message_id)
+            return
+
         self.send_chat_action(chat_id, "upload_photo")
         cards = split_solution_into_cards(answer)
         total_cards = len(cards)
@@ -271,19 +289,20 @@ class TelegramBot:
             success, answer = self.solver.solve(
                 prompt=caption or default_photo_prompt,
                 image_bytes=image_bytes,
-                mime_type="image/jpeg"
+                mime_type="image/jpeg",
+                chat_id=chat_id
             )
             if not success:
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
                 return
 
-            self._send_rendered_solution_or_text(chat_id, answer, message_id)
+            self._send_rendered_solution_or_text(chat_id, answer, message_id, force_photo=True)
             return
 
-        # Handle Text (Written Question / Math / Science Exercise)
+        # Handle Text (Written Question / Math / Science Exercise / Emotional Chat)
         if text:
             self.send_chat_action(chat_id, "typing")
-            success, answer = self.solver.solve(prompt=text)
+            success, answer = self.solver.solve(prompt=text, chat_id=chat_id)
             if not success:
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
                 return
@@ -352,6 +371,14 @@ class TelegramBot:
                 "បង្កើតឡើងដើម្បីជួយសម្រួលដល់ការសិក្សារបស់សិស្សានុសិស្សកម្ពុជា! 🇰🇭❤️"
             )
             self.send_message(chat_id, about_msg, reply_to_message_id=message_id)
+
+        elif cmd in ["/clear", "/reset", "/clear@yourbot", "/reset@yourbot"]:
+            self.solver.clear_history(chat_id)
+            self.send_message(
+                chat_id,
+                "🧹 អូខេ! ខ្ញុំបានលុបប្រវត្តិការសន្ទនាមុនៗអស់ហើយ! តោះ ចាប់ផ្ដើមនិយាយគ្នាសារថ្មី 😊",
+                reply_to_message_id=message_id
+            )
 
         else:
             self.send_message(

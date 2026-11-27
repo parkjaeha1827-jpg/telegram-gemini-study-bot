@@ -18,3 +18,7 @@ venv/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local conversation memory & temporary files
+chat_history.json
+*.png
