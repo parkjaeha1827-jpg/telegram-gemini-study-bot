@@ -1,8 +1,8 @@
 """
 HTML/KaTeX to PNG Image Renderer
-Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, large, full-width PNG images.
-Refined typography for comfortable reading where all detailed steps and final answers are visible.
-Features multi-engine fallback (Microlink -> Thum.io -> S-Shot) so rate limits never block rendering.
+Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, compact 12px full-width PNG images.
+Refined 12px typography ensures that the entire detailed solution and final answer are 100% visible without clipping.
+Uses fullpage capture pipeline (Microlink -> Thum.io fullpage -> S-Shot) so nothing is cut off at the bottom.
 """
 
 import os
@@ -31,11 +31,11 @@ def decode_solution_payload(encoded_str: str) -> str:
         return ""
 
 
-def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1600) -> List[str]:
+def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1800) -> List[str]:
     """
     Splits multi-exercise solutions strictly by exercise boundary.
     Guarantees: 1 Exercise = 1 Complete Image Page with full detailed steps and final answer.
-    If a single exercise is exceptionally long (> 1600 chars), splits cleanly into Part 1 & Part 2
+    If a single exercise is exceptionally long (> 1800 chars), splits cleanly into Part 1 & Part 2
     ensuring Part 2 always retains the complete final answer.
     """
     text = markdown_text.strip()
@@ -97,8 +97,8 @@ def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1600
 
 def get_solution_html(markdown_text: str) -> str:
     """
-    Generates high-contrast HTML document with comfortable Kantumruy Pro font (20px),
-    crisp KaTeX math (1.22em), and balanced layout where all steps and answers are visible.
+    Generates high-contrast HTML document with 12px Kantumruy Pro font,
+    crisp KaTeX math, and fullpage-friendly layout ensuring all steps and final answer are visible.
     """
     encoded_b64 = base64.b64encode(markdown_text.encode("utf-8")).decode("ascii")
 
@@ -121,7 +121,7 @@ def get_solution_html(markdown_text: str) -> str:
     body {{
       background: #ffffff;
       font-family: 'Kantumruy Pro', -apple-system, BlinkMacSystemFont, sans-serif;
-      padding: 16px;
+      padding: 12px;
       display: flex;
       justify-content: center;
       align-items: flex-start;
@@ -130,86 +130,86 @@ def get_solution_html(markdown_text: str) -> str:
     }}
     #solution-card {{
       background: #ffffff;
-      width: 720px;
-      padding: 30px 36px;
-      border-radius: 18px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+      width: 640px;
+      padding: 20px 24px;
+      border-radius: 14px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
       border: 1.5px solid #e2e8f0;
     }}
     .badge {{
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 6px;
       background: #f0fdf4;
       color: #15803d;
-      font-size: 16.5px;
+      font-size: 11.5px;
       font-weight: 700;
-      padding: 6px 16px;
+      padding: 4px 12px;
       border-radius: 9999px;
-      margin-bottom: 18px;
-      border: 1.5px solid #86efac;
+      margin-bottom: 12px;
+      border: 1px solid #86efac;
     }}
     #content-body {{
-      font-size: 20px;
-      line-height: 1.78;
+      font-size: 12px;
+      line-height: 1.62;
       color: #0f172a;
       font-weight: 500;
     }}
     #content-body h1, #content-body h2, #content-body h3 {{
       color: #020617;
-      margin: 14px 0 8px 0;
-      font-size: 23px;
+      margin: 10px 0 6px 0;
+      font-size: 14.5px;
       font-weight: 800;
     }}
     #content-body p {{
-      margin-bottom: 10px;
+      margin-bottom: 6px;
     }}
     #content-body strong {{
       color: #020617;
-      font-size: 21.5px;
+      font-size: 13px;
       font-weight: 800;
     }}
     #content-body hr {{
       border: none;
-      border-top: 1.5px dashed #cbd5e1;
-      margin: 18px 0;
+      border-top: 1px dashed #cbd5e1;
+      margin: 12px 0;
     }}
     #content-body ul, #content-body ol {{
-      margin: 8px 0 12px 24px;
+      margin: 6px 0 8px 18px;
     }}
     #content-body li {{
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }}
     .katex {{
-      font-size: 1.22em !important;
+      font-size: 1.15em !important;
     }}
     .katex-display {{
-      margin: 14px 0 !important;
-      padding: 4px 0;
-      font-size: 1.2em !important;
+      margin: 8px 0 !important;
+      padding: 2px 0;
+      font-size: 1.15em !important;
       overflow-x: auto;
       overflow-y: hidden;
     }}
     pre, code {{
       font-family: 'Kantumruy Pro', monospace;
       background: #f8fafc;
-      border-radius: 8px;
+      border-radius: 6px;
+      font-size: 11.5px;
     }}
     pre {{
-      padding: 12px 16px;
-      margin: 10px 0;
-      border: 1.5px solid #cbd5e1;
-      font-size: 18px;
+      padding: 8px 12px;
+      margin: 8px 0;
+      border: 1px solid #cbd5e1;
       overflow-x: auto;
     }}
     .footer-watermark {{
-      margin-top: 22px;
-      padding-top: 12px;
-      border-top: 1.5px solid #f1f5f9;
+      margin-top: 14px;
+      padding-top: 8px;
+      border-top: 1px solid #f1f5f9;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 13.5px;
+      font-size: 10.5px;
       font-weight: 600;
       color: #64748b;
     }}
@@ -268,9 +268,9 @@ def get_solution_html(markdown_text: str) -> str:
 def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[bytes]:
     """
     Renders solution markdown (Khmer + KaTeX LaTeX) into a high-DPI, full-width PNG image.
-    Uses multi-engine pipeline:
+    Uses multi-engine pipeline with fullpage capture:
       1. Microlink API (Retina 2x, crispest)
-      2. Thum.io API (Free, high-speed, no rate limits)
+      2. Thum.io fullpage API (Free, high-speed, no rate limits, full-height)
       3. Mini s-shot API (Emergency fallback)
     """
     try:
@@ -284,7 +284,7 @@ def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[by
                 "screenshot": "true",
                 "embed": "screenshot.url",
                 "element": "#solution-card",
-                "viewport.width": "800",
+                "viewport.width": "720",
                 "viewport.deviceScaleFactor": "2",
                 "waitForTimeout": "1000"
             }
@@ -297,9 +297,9 @@ def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[by
         except Exception as e:
             print(f"[Renderer Microlink Error] {e}")
 
-        # 2. Fallback to Thum.io (fast, reliable, free, no rate limits)
+        # 2. Fallback to Thum.io fullpage (fast, reliable, free, full-height capture)
         try:
-            thum_url = f"https://image.thum.io/get/width/720/noanimate/{solution_url}"
+            thum_url = f"https://image.thum.io/get/fullpage/width/720/noanimate/{solution_url}"
             resp = requests.get(thum_url, timeout=18)
             if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
                 return resp.content
