@@ -18,6 +18,7 @@ import io
 import re
 import json
 import html
+import urllib.parse
 from typing import Optional, Dict, Any, Tuple
 import requests
 
@@ -59,7 +60,7 @@ URL_PATTERNS = {
         re.IGNORECASE
     ),
     "capcut": re.compile(
-        r'https?://(?:www\.)?capcut\.com/(?:t/|template-detail/)[^\s<>"\'`]+',
+        r'https?://(?:www\.|mobile\.)?(?:capcut\.com|capcutshare\.com|capcut\.net)/(?:t/|tv2/|template-detail/|watch/|s/|templates/)[^\s<>"\'`]+',
         re.IGNORECASE
     ),
     "pinterest": re.compile(
@@ -242,13 +243,134 @@ def extract_pinterest_video(url: str) -> Optional[Dict[str, Any]]:
 
 def extract_capcut_video(url: str) -> Optional[Dict[str, Any]]:
     """
-    Extracts no-watermark CapCut template / video link via TikWM API
-    or direct page metadata scraper.
+    Extracts no-watermark HD CapCut template / video link via direct
+    SSR data parsing (__MODERN_ROUTER_DATA__, RENDER_DATA, or regex),
+    with TikWM and secondary API fallbacks.
     """
-    # 1. Primary: TikWM API (supports CapCut)
+    # 1. Primary: Direct CapCut SSR page extraction (Pure Python, fast, HD)
+    try:
+        session = requests.Session()
+        resp = session.get(
+            url,
+            headers=DEFAULT_HEADERS,
+            allow_redirects=True,
+            timeout=(5.0, 15.0)
+        )
+        if resp.status_code == 200:
+            page_text = resp.text
+
+            # 1a. Parse __MODERN_ROUTER_DATA__ (Standard CapCut template-detail state)
+            m_modern = re.search(r'<script[^>]*id=["\']__MODERN_ROUTER_DATA__["\'][^>]*>(.*?)</script>', page_text, re.DOTALL)
+            if m_modern:
+                try:
+                    data = json.loads(m_modern.group(1))
+                    loader_data = data.get("loaderData", {})
+                    root = loader_data.get("$", {}) or {}
+                    td = root.get("templateDetail", {})
+                    sd = td.get("structuredData") or {}
+
+                    direct_url = td.get("videoUrl") or sd.get("contentUrl")
+                    if direct_url:
+                        raw_title = td.get("title") or sd.get("name") or "CapCut Template"
+                        author_obj = td.get("author") or sd.get("creator") or {}
+                        raw_author = author_obj.get("name") if isinstance(author_obj, dict) else "CapCut Creator"
+
+                        title = clean_unwanted_thai(raw_title) or "CapCut Template"
+                        author = clean_unwanted_thai(raw_author) or "CapCut Creator"
+
+                        height = td.get("videoHeight") or sd.get("height")
+                        quality = f"{height}p HD (No Watermark)" if height else "HD (No Watermark)"
+
+                        return {
+                            "success": True,
+                            "direct_url": direct_url,
+                            "title": title.strip(),
+                            "author": author.strip(),
+                            "platform": "CapCut",
+                            "platform_code": "capcut",
+                            "quality": quality,
+                            "cover_url": td.get("coverUrl") or sd.get("thumbnailUrl"),
+                        }
+                except Exception as e:
+                    print(f"[video_service] CapCut __MODERN_ROUTER_DATA__ parse error: {e}")
+
+            # 1b. Parse RENDER_DATA (URL-encoded JSON format)
+            m_render = re.search(r'<script[^>]*id=["\']RENDER_DATA__["\'][^>]*>(.*?)</script>', page_text, re.DOTALL)
+            if m_render:
+                try:
+                    raw_json = urllib.parse.unquote(m_render.group(1).strip())
+                    data = json.loads(raw_json)
+
+                    def find_video_url(d):
+                        if isinstance(d, dict):
+                            for key in ("video_url", "play_url", "videoUrl", "contentUrl"):
+                                if d.get(key) and isinstance(d[key], str) and d[key].startswith("http"):
+                                    return d[key]
+                            for v in d.values():
+                                res = find_video_url(v)
+                                if res:
+                                    return res
+                        elif isinstance(d, list):
+                            for item in d:
+                                res = find_video_url(item)
+                                if res:
+                                    return res
+                        return None
+
+                    direct_url = find_video_url(data)
+                    if direct_url:
+                        title_match = re.search(r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']', page_text)
+                        raw_title = html.unescape(title_match.group(1)) if title_match else "CapCut Template"
+                        return {
+                            "success": True,
+                            "direct_url": direct_url,
+                            "title": clean_unwanted_thai(raw_title) or "CapCut Template",
+                            "author": "CapCut Creator",
+                            "platform": "CapCut",
+                            "platform_code": "capcut",
+                            "quality": "HD (No Watermark)"
+                        }
+                except Exception as e:
+                    print(f"[video_service] CapCut RENDER_DATA parse error: {e}")
+
+            # 1c. Regex search for contentUrl or videoUrl attributes
+            matches = re.findall(r'"(?:contentUrl|videoUrl)"\s*:\s*"([^"]+)"', page_text)
+            for m in matches:
+                clean = m.encode('utf-8').decode('unicode_escape').replace(r'\/', '/')
+                if clean.startswith("http") and ("capcutvod.com" in clean or "ibytedtos.com" in clean or "bytecdn" in clean or ".mp4" in clean):
+                    title_match = re.search(r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']', page_text)
+                    raw_title = html.unescape(title_match.group(1)) if title_match else "CapCut Template"
+                    return {
+                        "success": True,
+                        "direct_url": clean,
+                        "title": clean_unwanted_thai(raw_title) or "CapCut Template",
+                        "author": "CapCut Creator",
+                        "platform": "CapCut",
+                        "platform_code": "capcut",
+                        "quality": "HD (No Watermark)"
+                    }
+
+            # 1d. Check og:video
+            og_video = re.search(r'<meta\s+(?:property|name)=["\']og:video["\']\s+content=["\']([^"\']+)["\']', page_text)
+            if og_video:
+                title_match = re.search(r'<meta\s+(?:property|name)=["\']og:title["\']\s+content=["\']([^"\']+)["\']', page_text)
+                title = clean_unwanted_thai(html.unescape(title_match.group(1))) if title_match else "CapCut Video"
+                return {
+                    "success": True,
+                    "direct_url": html.unescape(og_video.group(1)),
+                    "title": title or "CapCut Video",
+                    "author": "CapCut Creator",
+                    "platform": "CapCut",
+                    "platform_code": "capcut",
+                    "quality": "HD"
+                }
+    except Exception as e:
+        print(f"[video_service] CapCut direct scraper exception: {e}")
+
+    # 2. Fallback: TikWM API
     try:
         api_url = f"https://www.tikwm.com/api/?url={requests.utils.quote(url)}"
-        resp = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=(5.0, 15.0))
+        resp = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=(5.0, 12.0))
         if resp.status_code == 200:
             data = resp.json()
             if data.get("code") == 0:
@@ -257,54 +379,19 @@ def extract_capcut_video(url: str) -> Optional[Dict[str, Any]]:
                 if play_url:
                     if play_url.startswith("/"):
                         play_url = f"https://www.tikwm.com{play_url}"
+                    raw_title = d.get("title") or "CapCut Template"
+                    raw_author = d.get("author", {}).get("nickname") or "CapCut Creator"
                     return {
                         "success": True,
                         "direct_url": play_url,
-                        "title": d.get("title") or "CapCut Template",
-                        "author": d.get("author", {}).get("nickname") or "CapCut Creator",
+                        "title": clean_unwanted_thai(raw_title) or "CapCut Template",
+                        "author": clean_unwanted_thai(raw_author) or "CapCut Creator",
                         "platform": "CapCut",
                         "platform_code": "capcut",
                         "quality": "HD (No Watermark)"
                     }
     except Exception as e:
         print(f"[video_service] CapCut TikWM exception: {e}")
-
-    # 2. Direct Scraper Fallback
-    try:
-        session = requests.Session()
-        resp = session.get(url, headers=DEFAULT_HEADERS, allow_redirects=True, timeout=(5.0, 15.0))
-        if resp.status_code == 200:
-            page_text = resp.text
-            # Check og:video
-            og_video = re.search(r'<meta\s+(?:property|name)=["\']og:video["\']\s+content=["\']([^"\']+)["\']', page_text)
-            if og_video:
-                title_match = re.search(r'<meta\s+(?:property|name)=["\']og:title["\']\s+content=["\']([^"\']+)["\']', page_text)
-                title = html.unescape(title_match.group(1)) if title_match else "CapCut Video"
-                return {
-                    "success": True,
-                    "direct_url": html.unescape(og_video.group(1)),
-                    "title": title,
-                    "author": "CapCut Creator",
-                    "platform": "CapCut",
-                    "platform_code": "capcut",
-                    "quality": "HD"
-                }
-
-            # Search for video_url in JSON scripts
-            v_matches = re.findall(r'"video_url"\s*:\s*"([^"]+)"', page_text)
-            if v_matches:
-                clean_url = v_matches[0].replace(r"\/", "/")
-                return {
-                    "success": True,
-                    "direct_url": clean_url,
-                    "title": "CapCut Video",
-                    "author": "CapCut Creator",
-                    "platform": "CapCut",
-                    "platform_code": "capcut",
-                    "quality": "HD"
-                }
-    except Exception as e:
-        print(f"[video_service] CapCut scraper exception: {e}")
 
     return None
 

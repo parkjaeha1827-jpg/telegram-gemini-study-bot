@@ -492,6 +492,67 @@ def test_clean_unwanted_thai():
     print("✓ clean_unwanted_thai passed.")
 
 
+def test_capcut_detection_and_extraction():
+    print("Testing CapCut URL detection and SSR extraction...")
+    from video_service import detect_video_url, extract_capcut_video
+    from unittest.mock import patch, MagicMock
+
+    # 1. Test URL detection across all CapCut share formats
+    samples = [
+        ("https://www.capcut.com/template-detail/7156421419591634182", "capcut"),
+        ("https://www.capcut.com/t/Zs82X9vYk/", "capcut"),
+        ("I found this amazing template in CapCut. Tap the link to try it! https://www.capcut.com/t/Zs82X9vYk/", "capcut"),
+        ("https://mobile.capcutshare.com/s/Zs82X9vYk", "capcut"),
+        ("https://www.capcut.net/template-detail/12345", "capcut"),
+    ]
+
+    for text, expected_platform in samples:
+        res = detect_video_url(text)
+        assert res is not None, f"Failed to detect CapCut in: {text}"
+        url, platform = res
+        assert platform == expected_platform
+        assert "capcut" in url
+
+    # 2. Test SSR __MODERN_ROUTER_DATA__ parsing mock
+    mock_html = """
+    <html>
+      <head><title>CapCut</title></head>
+      <body>
+        <script id="__MODERN_ROUTER_DATA__" type="application/json">
+        {
+          "loaderData": {
+            "$": {
+              "templateDetail": {
+                "title": "Sad Mood Beat ค่า",
+                "videoUrl": "https://v16-vod.capcutvod.com/sample_hd.mp4",
+                "videoHeight": 1080,
+                "videoWidth": 1920,
+                "author": {"name": "Nang Springer ครับ"}
+              }
+            }
+          }
+        }
+        </script>
+      </body>
+    </html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = mock_html
+
+    with patch("requests.Session.get", return_value=mock_resp):
+        info = extract_capcut_video("https://www.capcut.com/template-detail/7156421419591634182")
+        assert info is not None
+        assert info["success"] is True
+        assert info["direct_url"] == "https://v16-vod.capcutvod.com/sample_hd.mp4"
+        # Thai characters must be stripped
+        assert info["title"] == "Sad Mood Beat"
+        assert info["author"] == "Nang Springer"
+        assert "1080p HD" in info["quality"]
+
+    print("✓ CapCut URL detection and SSR extraction passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -509,6 +570,7 @@ if __name__ == "__main__":
     test_voice_service_and_bot_voice_handling()
     test_video_downloader_detection_and_handling()
     test_clean_unwanted_thai()
+    test_capcut_detection_and_extraction()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")
