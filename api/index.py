@@ -51,6 +51,17 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(html.encode("utf-8"))
             return
 
+        if "test_video" in query_params:
+            from video_service import extract_video_info
+            v_url = query_params["test_video"][0]
+            info = extract_video_info(v_url)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            res_data = {"test_url": v_url, "info": info}
+            self.wfile.write(json.dumps(res_data, default=str).encode("utf-8"))
+            return
+
         # Default Health check response
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
