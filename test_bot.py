@@ -91,13 +91,13 @@ def test_math_formatting():
     assert r"\frac" not in formatted
     assert r"\sin" not in formatted
     assert r"\cos" not in formatted
-    assert "```" in formatted  # Vertical fraction was wrapped in code block
-    assert "───" in formatted
+    assert "(1 - cos 2x) / (2)" in formatted or "(1 - cos 2x)/2" in formatted
 
-    # Test orphan fraction wrapping
-    orphan = "○ **ខ)**\n 35 - q\n ──────\n   5"
-    wrapped = format_math_telegram(orphan)
+    # Test code block with fractions
+    code_block_sample = "```\n 35 - q\n ──────\n   5\n```"
+    wrapped = format_math_telegram(code_block_sample)
     assert "```" in wrapped
+    assert "──────" in wrapped
     print("✓ Math formatting and fraction wrapping test passed.")
 
 

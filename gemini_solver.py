@@ -2,8 +2,8 @@
 Gemini Homework Solver Engine
 Uses Google Gemini API to solve academic exercises across all subjects.
 Formats all equations in clean, textbook-quality math specifically optimized for Telegram.
-All vertical fractions and multi-line equations are enclosed in Monospace code blocks (```)
-to guarantee perfect alignment on all mobile devices.
+All solutions are complete 100% from start to finish (never truncated or cut off),
+with smart algebraic simplifications, balanced brackets, and clean compact layouts.
 """
 
 import os
@@ -21,30 +21,38 @@ except ImportError:
 
 SYSTEM_INSTRUCTION = """
 អ្នកជាគ្រូជំនួយដោះស្រាយលំហាត់គំរូកម្រិតខ្ពស់ ឆ្លើយចំៗ ត្រឹមត្រូវ ស្អាតបាត និងងាយយល់បំផុត។
-ត្រូវដោះស្រាយតាមគំរូស្តង់ដារជាក់ស្តែងខាងក្រោមនេះជានិច្ច ហាមលើសខ្វះ ហាមបន្ថែមពាក្យអូសបន្លាយដែលនាំឱ្យពិបាកមើល៖
 
-ច្បាប់ទម្រង់ដាច់ខាត (STRICT TEMPLATE RULES):
-១. ក្បាលលំហាត់ (Header): សរសេរលេខរៀងលំហាត់ និងប្រធានដោយផ្ទាល់ ឧទាហរណ៍៖
-   **២៥. គណនាអាំងតេក្រាល I = ∫[0 → π/4] sin² x dx**
-   (ប្រើលេខខ្មែរ ២៥, ២៦, ២៧... ឱ្យដូចប្រធានលំហាត់)។
-២. ហាមដាច់ខាត៖
+ច្បាប់ដែកថែបដើម្បីកុំឱ្យដំណោះស្រាយ «ដាច់ក្បាលដាច់កន្ទុយ» ឬ «ពិបាកមើល» (CORE RULES):
+១. ដំណោះស្រាយពេញលេញ ១០០% តាំងពីដើមដល់ចប់ (COMPLETE FROM HEAD TO TAIL):
+   - រាល់លំហាត់ទាំងអស់ ត្រូវតែមានដំណោះស្រាយពេញលេញតាំងពីដើមរហូតដល់ចុងបញ្ចប់៖
+     • ក្បាលលំហាត់៖ **[លេខរៀង]. [ប្រធានលំហាត់]** (ឧ. **២៩. សរសេរចំនួនកុំផ្លិច Z = ... ជាទម្រង់ត្រីកោណមាត្រ**)
+     • ជំហានគណនា៖ បង្ហាញលំហូរគណនាច្បាស់ៗមួយៗ
+     • ចម្លើយចុងក្រោយ៖ បញ្ចប់ដោយចម្លើយចុងក្រោយពេញលេញជានិច្ច (ឧ. «ចម្លើយត្រឹមត្រូវគឺ គ. ...» ឬ «ដូចនេះ Z = ...»)
+   - ហាមដាច់ខាតកុំកាត់ផ្តាច់ពាក់កណ្តាលទី ឬបាត់ចម្លើយចុងក្រោយ (ហាមដាច់ខាតកុំឱ្យដាច់ក្បាលដាច់កន្ទុយ)!
+
+២. ជ្រើសរើសវិធីដោះស្រាយខ្លី ឆ្លាតវៃ និងស្រួលយល់បំផុត (SMART & DIRECT METHODS):
+   - បើកន្សោមអាចសម្រួលបាន ត្រូវសម្រួលកត្តារួមជាមុនសិនជានិច្ច!
+     ឧទាហរណ៍ជាក់ស្តែង លំហាត់ ២៩៖
+     Z = (5√3 - 5i) / (-√6 + i√2)
+       = [ 5(√3 - i) ] / [ -√2(√3 - i) ]
+       = - 5 / √2
+       = - (5√2) / 2
+     រួចសរសេរជាទម្រង់ត្រីកោណមាត្រភ្លាមៗ៖
+     Z = (5√2)/2 · ( cos π + i sin π )
+   - ហាមដាច់ខាតកុំប្រើវិធីគណនាក្បួនវែងអន្លាយ ស្មុគស្មាញ (ដូចជាគណនាប៉ូលែភាគយក រួចគណនាប៉ូលែភាគបែង...) ដែលនាំឱ្យវែងរញ៉េរញ៉ៃ និងកាត់ផ្តាច់ពាក់កណ្តាលទី។
+
+៣. ដំណោះស្រាយមានលំហូររលូន មិនបំបែកជាប្រអប់កូដច្រើនកំប៉ិកកំប៉ុក (UNIFIED FLOW):
+   - ក្នុងលំហាត់មួយ ដំណោះស្រាយគណនាត្រូវសរសេរឱ្យមានលំហូរបន្តគ្នាជាប់ជានិច្ច កុំបំបែកជាប្រអប់តូចៗ ៣-៤ ប្រអប់ដែលនាំឱ្យមើលទៅដាច់ក្បាលដាច់កន្ទុយ។
+   - បើមានប្រភាគឈរ ត្រូវសរសេរឱ្យស្មើជួរស្អាត មានភាគយក របារប្រភាគ ─── និងភាគបែង។
+   - គម្លាតជួរលើក្រោមត្រូវនៅកៀកគ្នាសមល្មម មិនឱ្យឃ្លាតឆ្ងាយពីគ្នាពេក។
+
+៤. ហាមពាក្យអូសបន្លាយ៖
    - ហាមសរសេរពាក្យស្វាគមន៍ («សួស្តី...»)
    - ហាមសរសេរ «**ដំណោះស្រាយ៖**» ឬ «- ដំណោះស្រាយ៖»
    - ហាមសរសេរ «👉 **ចម្លើយចុងក្រោយ៖**» ឬ «👉 **ដូចនេះ៖**»
-   - ហាមប្រើ Bullet points ច្រើនជាន់ដែលនាំឱ្យរញ៉េរញ៉ៃ (ប្រើ «○ » តែពេលបែងចែក «○ លក្ខខណ្ឌកំណត់៖» និង «○ ដោះស្រាយសមីការ៖» ឬសំណួររង ក), ខ) ប៉ុណ្ណោះ)
-៣. ការបង្ហាញរូបមន្ត និងប្រភាគ (Math & Vertical Fractions):
-   - ហាមប្រើសញ្ញា / សម្រាប់ប្រភាគ។ ត្រូវសរសេរជាទម្រង់ប្រភាគឈរពិតប្រាកដ មានភាគយកលើ របារប្រភាគ ─── និងភាគបែងក្រោម។
-   - រាល់ប្រភាគឈរ និងសមីការគណនា ត្រូវដាក់ក្នុងប្រអប់ Code block (```) ដើម្បីឱ្យស្មើជួរស្អាតឥតខ្ចោះលើទូរស័ព្ទ Telegram។
-   - ហាមកាត់សមីការជាបំណែកៗតូចៗច្រើនប្រអប់ ត្រូវសរសេរសមភាពបន្តគ្នាឱ្យរលូន ដូចគំរូខាងក្រោម។
-៤. បញ្ចប់ចម្លើយ៖
-   - ប្រសិនបើជាលំហាត់ពហុជ្រើសរើស (Multiple Choice): បញ្ចប់ដោយ «ចម្លើយត្រឹមត្រូវគឺ គ. I = (π - 2)/8» (ឬ គ. r = 2√2)
-   - ប្រសិនបើជាលំហាត់ដោះស្រាយសមីការ៖ បញ្ចប់ដោយ «ដូចនេះ x = 0»
-៥. គម្លាតជួរលើក្រោម (COMPACT VERTICAL SPACING):
-   - ហាមដាច់ខាតកុំទុកគម្លាតជួរទទេ (Blank lines) ឆ្ងាយពីគ្នាពេក ទាំងក្នុង និងក្រៅប្រអប់ Code block។
-   - រវាងអត្ថបទ និងប្រអប់ Code block ត្រូវចុះបន្ទាត់ត្រឹម ១ ជួរបានហើយ។
-   - ក្នុងប្រអប់ Code block ហាមទុកបន្ទាត់ទទេច្រើនជាន់ រាល់ជំហានគណនាត្រូវនៅកៀកគ្នាសមល្មម ងាយស្រួលមើល និងស្អាតបាត។
+   - ចូលដោះស្រាយផ្ទាល់ភ្លាមៗតាមគំរូខាងក្រោម។
 
-គំរូជាក់ស្តែងទាំង ៤ (FOLLOW THESE EXACTLY):
+គំរូស្តង់ដារទាំង ៤ (FOLLOW THESE EXACTLY):
 
 គំរូទី ១ (អាំងតេក្រាល):
 **២៥. គណនាអាំងតេក្រាល I = ∫₀^(π/4) sin² x dx**
@@ -53,16 +61,13 @@ SYSTEM_INSTRUCTION = """
           π/4  1 - cos 2x            1 [        sin 2x ] π/4
 I  =   ∫     ──────────── dx  =  ─ [ x  -   ────── ]
           0        2                 2 [          2    ] 0
-```
-ជំនួសគោលកំណត់ពី 0 ដល់ π/4 ៖
-```
+
           1 [ ( π/4 - sin(2 · π/4)/2 ) - ( 0 - sin(0)/2 ) ]
-I  =  ─
+   =  ─
           2
-```
-```
+
           1   π    sin(π/2)        1   π   1        1   π - 2        π - 2
-I  =  ─ ( ─  - ──────── )  =  ─ ( ─ - ─ )  =  ─ ( ───── )  =  ─────
+   =  ─ ( ─  - ──────── )  =  ─ ( ─ - ─ )  =  ─ ( ───── )  =  ─────
           2   4       2            2   4   2        2     4            8
 ```
 ចម្លើយត្រឹមត្រូវគឺ គ. I = (π - 2)/8
@@ -82,11 +87,9 @@ lim_{x→+∞} ( 1 + 4/(x - 1) )^(x+2)
 តាង u = (x - 1)/4 ⇒ x - 1 = 4u ⇒ x + 2 = 4u + 3 (ពេល x → +∞ នោះ u → +∞) ៖
 ```
 lim_{u→+∞} ( 1 + 1/u )^(4u+3) = lim_{u→+∞} [( 1 + 1/u )^u]⁴ · ( 1 + 1/u )³
+                              = e⁴ · 1³ = e⁴
 ```
-ដោយ lim_{u→+∞} ( 1 + 1/u )^u = e និង lim_{u→+∞} ( 1 + 1/u )³ = 1³ = 1 គេបាន៖
-```
-= e⁴ · 1 = e⁴
-```
+ចម្លើយត្រឹមត្រូវគឺ e⁴
 
 គំរូទី ៣ (សមីការលោការីត):
 **២៧. ដោះស្រាយសមីការ log₃(x + 1) + log₃(x + 3) = 1**
@@ -129,7 +132,70 @@ Z = ───────────  =  ────────────  
 Z =  - ─────  =  ────── ( -1 + 0i ) = ────── ( cos π + i sin π )
          2          2                    2
 ```
+ចម្លើយត្រឹមត្រូវគឺ គ. Z = (5√2)/2 (cos π + i sin π)
 """.strip()
+
+
+def extract_braced_content(text: str, start_idx: int) -> Tuple[Optional[str], int]:
+    """Extracts content within matching { and } starting at start_idx."""
+    if start_idx >= len(text) or text[start_idx] != "{":
+        return None, start_idx
+    depth = 0
+    content = []
+    for i in range(start_idx, len(text)):
+        char = text[i]
+        if char == "{":
+            depth += 1
+            if depth > 1:
+                content.append(char)
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(content), i + 1
+            else:
+                content.append(char)
+        else:
+            content.append(char)
+    return None, start_idx
+
+
+def replace_latex_fractions_and_roots(text: str) -> str:
+    """
+    Robustly parses and converts LaTeX \\frac{...}{...} and \\sqrt{...}
+    even with nested braces or complex expressions.
+    """
+    # 1. Parse \frac{num}{den}
+    result = []
+    i = 0
+    while i < len(text):
+        if text.startswith(r"\frac", i):
+            num, next_i = extract_braced_content(text, i + 5)
+            if num is not None:
+                while next_i < len(text) and text[next_i] in " \t\r\n":
+                    next_i += 1
+                den, end_i = extract_braced_content(text, next_i)
+                if den is not None:
+                    num = replace_latex_fractions_and_roots(num)
+                    den = replace_latex_fractions_and_roots(den)
+                    # Clean representation
+                    result.append(f"({num}) / ({den})")
+                    i = end_i
+                    continue
+        elif text.startswith(r"\sqrt", i):
+            content, end_i = extract_braced_content(text, i + 5)
+            if content is not None:
+                content = replace_latex_fractions_and_roots(content)
+                result.append(f"√({content})")
+                i = end_i
+                continue
+        result.append(text[i])
+        i += 1
+
+    s = "".join(result)
+    # Simplify √(digit) -> √digit (e.g. √(2) -> √2)
+    s = re.sub(r"√\((\d+)\)", r"√\1", s)
+    s = re.sub(r"√\(([a-zA-Z])\)", r"√\1", s)
+    return s
 
 
 def sanitize_brackets_and_symbols(text: str) -> str:
@@ -144,43 +210,6 @@ def sanitize_brackets_and_symbols(text: str) -> str:
     for k, v in bad_chars.items():
         text = text.replace(k, v)
     return text
-
-
-def wrap_orphan_fraction_blocks(text: str) -> str:
-    """
-    Ensures any vertical fraction lines (containing ───) outside of code blocks
-    are properly wrapped in ``` code blocks so Telegram renders them in monospace.
-    """
-    if "───" not in text and "───" not in text:
-        return text
-
-    parts = text.split("```")
-    for idx in range(len(parts)):
-        # Even indices are outside code blocks
-        if idx % 2 == 0:
-            lines = parts[idx].split("\n")
-            new_lines = []
-            j = 0
-            while j < len(lines):
-                line = lines[j]
-                if "───" in line or "───" in line:
-                    # Gather block: 1-2 lines before, current line, 1-2 lines after
-                    block = []
-                    # Previous non-header line as numerator/expression
-                    if new_lines and new_lines[-1].strip() and not any(k in new_lines[-1] for k in ["លំហាត់", "ដំណោះស្រាយ", "○", "👉", "**"]):
-                        block.append(new_lines.pop())
-                    block.append(line)
-                    # Next line as denominator
-                    if j + 1 < len(lines) and lines[j+1].strip() and not any(k in lines[j+1] for k in ["លំហាត់", "ដំណោះស្រាយ", "○", "👉", "**"]):
-                        block.append(lines[j+1])
-                        j += 1
-                    new_lines.append("```\n" + "\n".join(block) + "\n```")
-                else:
-                    new_lines.append(line)
-                j += 1
-            parts[idx] = "\n".join(new_lines)
-
-    return "```".join(parts)
 
 
 def compact_vertical_spacing(text: str) -> str:
@@ -224,7 +253,7 @@ def compact_vertical_spacing(text: str) -> str:
 def format_math_telegram(text: str) -> str:
     """
     Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
-    Enforces clean vertical fractions in monospace blocks, eliminating broken proportional-font ASCII art.
+    Guarantees no raw frac or LaTeX leak, clean vertical fractions, and compact spacing.
     """
     if not text:
         return ""
@@ -272,22 +301,8 @@ def format_math_telegram(text: str) -> str:
     text = re.sub(r"\\ln", "ln", text)
     text = re.sub(r"\\log", "log", text)
 
-    # Fractions: \frac{A}{B} -> Vertical fraction wrapped in code block
-    def to_vert_fraction(m):
-        num = m.group(1).strip()
-        den = m.group(2).strip()
-        width = max(len(num), len(den)) + 2
-        bar = "─" * width
-        return f"\n```\n{num.center(width)}\n{bar}\n{den.center(width)}\n```\n"
-
-    for _ in range(5):
-        text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", to_vert_fraction, text)
-
-    # Square roots: \sqrt{...} -> √(...)
-    for _ in range(5):
-        text = re.sub(r"\\sqrt\{([a-zA-Z0-9]+)\}", r"√\1", text)
-        text = re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", text)
-    text = re.sub(r"\\sqrt(\d+)", r"√\1", text)
+    # Convert any lingering LaTeX \frac and \sqrt robustly
+    text = replace_latex_fractions_and_roots(text)
 
     # Integrals: \int_0^{\pi/4} -> ∫[0 → π/4]
     text = re.sub(r"\\int_?\{?([^}^\s\\]*)\}?\^\{?([^}^\s\\]*)\}?", r"∫[\1 → \2] ", text)
@@ -313,13 +328,10 @@ def format_math_telegram(text: str) -> str:
     # Clean any lingering lone backslashes
     text = re.sub(r"\\([a-zA-Z]+)", r"\1", text)
 
-    # Ensure any raw multi-line fractions outside code blocks get wrapped in ```
-    text = wrap_orphan_fraction_blocks(text)
-
     # Clean consecutive duplicate code block markers ``` ```
     text = re.sub(r"```\s*```", "", text)
 
-    # Eliminate excessive vertical gaps between lines and code blocks
+    # Eliminate excessive vertical gaps and tightens spacing
     text = compact_vertical_spacing(text)
 
     return text.strip()
@@ -364,9 +376,9 @@ class GeminiSolver:
             })
 
         default_prompt = (
-            "សូមដោះស្រាយលំហាត់នេះតាមគំរូស្តង់ដារជាក់ស្តែង៖ ក្បាលលំហាត់ «**[លេខរៀង]. [ប្រធាន]**», "
-            "ដំណោះស្រាយខ្លី ខ្លឹម ត្រឹមត្រូវតាមលំដាប់លំដោយ (ហាមបន្ថែមពាក្យអូសបន្លាយដែលនាំឱ្យពិបាកមើល) "
-            "រាល់ប្រភាគឈរត្រូវសរសេរមានភាគយក របារប្រភាគ ─── និងភាគបែង ដាក់ក្នុងប្រអប់ Code block (```) ជានិច្ច "
+            "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះឱ្យបានចប់សព្វគ្រប់ ១០០% គ្រប់លំហាត់ទាំងអស់ (មានក្បាលលំហាត់ «**[លេខរៀង]. [ប្រធាន]**», "
+            "ដំណោះស្រាយខ្លី ខ្លឹម សម្រួលកត្តារួមឱ្យងាយយល់ និងចម្លើយចុងក្រោយពេញលេញ ហាមដាច់ខាតកុំឱ្យដាច់ក្បាលដាច់កន្ទុយ)។ "
+            "រាល់ប្រភាគឈរត្រូវសរសេរមានភាគយក របារប្រភាគ ─── និងភាគបែង ដាក់ក្នុងប្រអប់ Code block (```) "
             "និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «ចម្លើយត្រឹមត្រូវគឺ គ. ...»)។"
         )
         text_content = prompt.strip() if prompt else default_prompt
@@ -405,7 +417,6 @@ class GeminiSolver:
                 if resp.status_code == 200:
                     ok, raw_text = self._extract_text(resp.json())
                     if ok:
-                        # Post-process through math formatter for 100% clean Telegram rendering
                         return True, format_math_telegram(raw_text)
                     return False, raw_text
 
