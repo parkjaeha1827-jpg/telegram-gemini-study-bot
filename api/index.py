@@ -59,7 +59,7 @@ class handler(BaseHTTPRequestHandler):
         status_data = {
             "status": "online",
             "service": "Telegram Gemini Study Bot",
-            "model": os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite"),
+            "model": "gemini-2.5-pro",
             "ready": bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("GEMINI_API_KEY")),
             "message": "Send POST requests with Telegram update payloads to /api/webhook or /"
         }

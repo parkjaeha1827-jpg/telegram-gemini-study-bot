@@ -515,15 +515,19 @@ def clean_unwanted_thai(text: str) -> str:
 class GeminiSolver:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+        raw_model = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+        if raw_model in ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3-pro", "gemini-3.1-flash-lite", "gemini-3.5-flash"]:
+            raw_model = "gemini-2.5-pro"
+        self.primary_model = raw_model
         self.model = self.primary_model
         self.candidate_models = [
             self.primary_model,
             "gemini-2.5-pro",
-            "gemini-3-pro",
             "gemini-2.5-flash",
-            "gemini-3.5-flash",
-            "gemini-3.5-flash-lite"
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash-8b"
         ]
         self.candidate_models = list(dict.fromkeys(self.candidate_models))
         self.memory = ChatMemory(max_messages=20)
@@ -628,8 +632,8 @@ class GeminiSolver:
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=30)
 
-                # If tools causes 400 Bad Request, retry without tools
-                if resp.status_code == 400 and "tools" in payload:
+                # If tools causes 400 Bad Request or 429 Rate Limit, retry without tools immediately
+                if resp.status_code in [400, 429] and "tools" in payload:
                     no_tools_payload = dict(payload)
                     del no_tools_payload["tools"]
                     resp = requests.post(url, headers=headers, json=no_tools_payload, timeout=30)
@@ -684,6 +688,9 @@ class GeminiSolver:
             except Exception as e:
                 last_error = str(e)
                 continue
+
+        if "429" in str(last_error):
+            return False, "⚠️ ប្រព័ន្ធកំពុងមានអ្នកប្រើប្រាស់ច្រើនក្នុងពេលតែមួយ (Rate limit / Quota)។ សូមមេត្តារង់ចាំប្រហែល ៣០ វិនាទី រួចសាកល្បងផ្ញើសារម្ដងទៀត។"
 
         return False, f"⚠️ Gemini API កំពុងមានបញ្ហាឆ្លើយតប: {last_error}"
 

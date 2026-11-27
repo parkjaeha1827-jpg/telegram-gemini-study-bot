@@ -28,7 +28,7 @@ def test_gemini_solver_init():
     assert solver.api_key == "test_key"
     assert solver.model == "gemini-2.5-pro"
     assert "gemini-2.5-pro" in solver.candidate_models
-    assert "gemini-3-pro" in solver.candidate_models
+    assert "gemini-2.0-flash" in solver.candidate_models
     assert solver.memory.max_messages == 20
     assert "Smart Dual-Mode" in SYSTEM_INSTRUCTION
     assert "ACADEMIC & EXAM MODE" in SYSTEM_INSTRUCTION
@@ -600,7 +600,12 @@ def test_search_grounding_and_persistent_memory():
     solver = GeminiSolver(api_key="test_api_key", model="gemini-2.5-pro")
     assert solver.primary_model == "gemini-2.5-pro"
     assert "gemini-2.5-pro" in solver.candidate_models
-    assert "gemini-3-pro" in solver.candidate_models
+    assert "gemini-2.0-flash" in solver.candidate_models
+    assert "gemini-1.5-flash" in solver.candidate_models
+
+    # Verify that legacy/obsolete models map to gemini-2.5-pro
+    legacy_solver = GeminiSolver(api_key="test_api_key", model="gemini-3.5-flash-lite")
+    assert legacy_solver.primary_model == "gemini-2.5-pro"
 
     # Verify ChatMemory remote KV sync mocks
     from unittest.mock import patch, MagicMock

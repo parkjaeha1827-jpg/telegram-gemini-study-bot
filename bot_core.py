@@ -640,7 +640,7 @@ class TelegramBot:
             self.send_message(chat_id, subjects_msg, reply_to_message_id=message_id)
 
         elif cmd in ["/about", "/about@yourbot"]:
-            active_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+            active_model = getattr(self.solver, "primary_model", "gemini-2.5-pro")
             about_msg = (
                 "🤖 *អំពី Telegram Study Bot:*\n\n"
                 f"• *ម៉ូដែល AI:* Google {active_model} (High Reasoning)\n"
