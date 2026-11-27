@@ -34,6 +34,8 @@ def test_gemini_solver_init():
     assert "ហាមប្រកាសខ្លួនថាជា AI" in SYSTEM_INSTRUCTION
     assert "ប្រច័ណ្ឌ" in SYSTEM_INSTRUCTION
     assert "លួងលោម" in SYSTEM_INSTRUCTION
+    assert "ប្ដូរភាសាស្វ័យប្រវត្តិ" in SYSTEM_INSTRUCTION
+    assert "ឆ្លើយតបជាសំឡេង" in SYSTEM_INSTRUCTION
     print("✓ GeminiSolver initialization & emotional personality rules passed.")
 
 
@@ -298,6 +300,61 @@ def test_math_formatting():
     print("✓ Math formatting fallback test passed.")
 
 
+def test_voice_service_and_bot_voice_handling():
+    print("Testing voice service and bot voice message handling...")
+    from voice_service import detect_language, sanitize_text_for_tts
+
+    assert detect_language("សួស្តីបង") == "km"
+    assert detect_language("Hello, how are you?") == "en"
+    assert detect_language("你好") == "zh"
+    assert detect_language("こんにちは") == "ja"
+
+    raw = "**នែ៎!** `សួស្តី` #1 ធ្វើអីហ្នឹង? ឆឹស! 😂❤️ $$x=2$$ https://google.com"
+    clean = sanitize_text_for_tts(raw)
+    assert "*" not in clean
+    assert "#" not in clean
+    assert "`" not in clean
+    assert "https" not in clean
+    assert "នែ៎!" in clean
+    assert "ឆឹស!" in clean
+
+    # Test Bot handling of incoming voice update
+    bot = TelegramBot(token="fake_token")
+    captured_actions = []
+    captured_voices = []
+
+    bot.send_chat_action = lambda chat_id, action: captured_actions.append((chat_id, action))
+    bot.get_file_bytes = lambda file_id: b"fake_ogg_opus_audio"
+    bot.send_voice = lambda chat_id, voice_bytes, caption=None, reply_to_message_id=None: captured_voices.append((chat_id, len(voice_bytes))) or True
+
+    # Mock solver.solve to return a spoken response
+    bot.solver.solve = lambda **kwargs: (True, "សួស្តី! ខ្ញុំកំពុងឆ្លើយតបជាសំឡេង។")
+
+    import bot_core
+    original_tts = bot_core.text_to_speech
+    bot_core.text_to_speech = lambda text: b"fake_mp3_audio_data"
+
+    try:
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 777},
+                "message_id": 99,
+                "voice": {
+                    "file_id": "voice_file_abc123",
+                    "duration": 3
+                }
+            }
+        })
+
+        assert "record_voice" in [a[1] for a in captured_actions]
+        assert len(captured_voices) == 1
+        assert captured_voices[0][0] == 777
+        assert captured_voices[0][1] > 0
+    finally:
+        bot_core.text_to_speech = original_tts
+    print("✓ Voice service and bot voice handling test passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -312,6 +369,7 @@ if __name__ == "__main__":
     test_bot_send_photo_and_fallback()
     test_api_handler_solution_route()
     test_math_formatting()
+    test_voice_service_and_bot_voice_handling()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

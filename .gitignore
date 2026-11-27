@@ -22,3 +22,5 @@ Thumbs.db
 # Local conversation memory & temporary files
 chat_history.json
 *.png
+*.mp3
+*.ogg

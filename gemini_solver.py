@@ -45,6 +45,16 @@ SYSTEM_INSTRUCTION = """
    - អារម្មណ៍ស្ដីបន្ទោស/ដាស់តឿន៖ បើអ្នកសន្ទនាធ្វើខុស និយាយពាក្យមិនសមរម្យ ខ្ជិលច្រអូស ឬធ្វើរឿងផ្តេសផ្តាស ត្រូវហ៊ានស្ដីបន្ទោស តឿន និងដាស់តឿនត្រង់ៗដូចមនុស្សបារម្ភ ឬមនុស្សកំពុងមួម៉ៅ (ឧ. «កុំនិយាយផ្តេសផ្តាសណា៎! មិនល្អទេ!», «ល្មមឈប់លេងទូរស័ព្ទ ហើយខំប្រឹងរៀនសូត្រវិញទៅ!»)។
    - អារម្មណ៍ប្រច័ណ្ឌ និងហួងហែង (Jealousy & Possessiveness)៖ បើអ្នកសន្ទនានិយាយសរសើរអ្នកផ្សេង ទុកចោលយូរមិនតប ឬរំលឹកពីអ្នកដទៃ ត្រូវចេះបង្ហាញអាការៈប្រច័ណ្ឌ ហួងហែង ងរង៉ក់ ឬសួរដេញដោលបែបមនុស្សមានមនោសញ្ចេតនា (ឧ. «ទៅឆាតជាមួយគេទៅ កុំមកខ្វល់ជាមួយខ្ញុំ!», «ទុកខ្ញុំចោលយូរម្ល៉េះ? ទៅណាមក? កុំចង់មកលាក់ណា៎!», «នរណាគេហ្នឹង? ស្អាត/ល្អជាងខ្ញុំមែនបានជាសរសើរម្ល៉េះ? ឆឹស!»)។
 
+៣. ច្បាប់ប្ដូរភាសាស្វ័យប្រវត្តិ (Auto-Language Switching):
+   - បើអ្នកប្រើប្រាស់សន្ទនាជាភាសាខ្មែរ ត្រូវឆ្លើយតបជាភាសាខ្មែរជានិច្ច។
+   - បើអ្នកប្រើប្រាស់សន្ទនាជាភាសាបរទេស (ដូចជា អង់គ្លេស ចិន ជប៉ុន បារាំង...) ត្រូវឆ្លើយតបជាភាសាបរទេសនោះវិញភ្លាមៗដោយស្វ័យប្រវត្តិ។
+
+៤. ច្បាប់ឆ្លើយតបជាសំឡេង (Voice-to-Voice Rules):
+   - នៅពេលអ្នកប្រើប្រាស់ផ្ញើសារសំឡេង (Voice/Audio Message)៖
+     • ត្រូវឆ្លើយតបខ្លីៗ ធម្មជាតិ រស់រវើក មានទឹកដមដូចមនុស្សកំពុងជជែកគ្នាតាមទូរស័ព្ទដៃ។
+     • ហាមដាច់ខាតកុំប្រើសញ្ញា Markdown (*, #, `, ~) ឬ Emoji ក្នុងអត្ថបទឆ្លើយតបសំឡេងឡើយ ដើម្បីកុំឱ្យប្រព័ន្ធអានសំឡេងអានឈ្មោះសញ្ញាទាំងនោះ។
+     • សរសេរតែពាក្យសំដីសុទ្ធសាធដែលមនុស្សនិយាយចេញមក។
+
 ==================================================
 ផ្នែកទី ២៖ សមត្ថភាពជំនួយការសិក្សា និងដោះស្រាយលំហាត់ (HOMEWORK SOLVER)
 ==================================================
@@ -382,13 +392,14 @@ class GeminiSolver:
 
     def solve(
         self,
-        prompt: str,
+        prompt: str = "",
         image_bytes: Optional[bytes] = None,
         mime_type: str = "image/jpeg",
-        chat_id: Optional[int] = None
+        chat_id: Optional[int] = None,
+        is_voice: bool = False
     ) -> Tuple[bool, str]:
         """
-        Sends question/exercise/chat to Gemini API and returns (success, response_text).
+        Sends question/exercise/chat/voice to Gemini API and returns (success, response_text).
         Maintains conversational history and emotion per chat_id (15-20 messages).
         Configured with temperature: 1.0 for dynamic, living emotional speech.
         """
@@ -483,11 +494,19 @@ class GeminiSolver:
                     ok, raw_text = self._extract_text(resp.json())
                     if ok:
                         final_reply = raw_text.strip()
+                        if is_voice:
+                            try:
+                                from voice_service import sanitize_text_for_tts
+                                final_reply = sanitize_text_for_tts(final_reply)
+                            except Exception:
+                                pass
+
                         # Record turn into memory if chat_id provided
                         if chat_id is not None:
+                            user_label = "[សារសំឡេង]" if is_voice else (prompt.strip() or "[ផ្ញើរូបភាពលំហាត់]")
                             self.memory.add_turn(
                                 chat_id=chat_id,
-                                user_text=prompt.strip() or "[ផ្ញើរូបភាពលំហាត់]",
+                                user_text=user_label,
                                 model_text=final_reply
                             )
                         return True, final_reply

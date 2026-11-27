@@ -11,6 +11,7 @@ import requests
 from typing import Dict, Any, List, Optional
 from gemini_solver import GeminiSolver, format_math_telegram
 from renderer import render_solution_to_png, split_solution_into_cards
+from voice_service import text_to_speech
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -106,6 +107,39 @@ class TelegramBot:
             return False
         except Exception as e:
             print(f"Exception sending photo: {e}")
+            return False
+
+    def send_voice(
+        self,
+        chat_id: int,
+        voice_bytes: bytes,
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None
+    ) -> bool:
+        """Sends an audio file as a playable voice message via sendVoice."""
+        try:
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+            if reply_to_message_id:
+                data["reply_to_message_id"] = reply_to_message_id
+
+            files = {
+                "voice": ("voice.mp3", voice_bytes, "audio/mpeg")
+            }
+
+            resp = requests.post(
+                f"{self.base_url}/sendVoice",
+                data=data,
+                files=files,
+                timeout=35
+            )
+            if resp.status_code == 200:
+                return True
+            print(f"Error sending voice ({resp.status_code}): {resp.text}")
+            return False
+        except Exception as e:
+            print(f"Exception sending voice: {e}")
             return False
 
     def get_file_bytes(self, file_id: str) -> Optional[bytes]:
@@ -247,11 +281,58 @@ class TelegramBot:
 
         text = (message.get("text") or "").strip()
         photo = message.get("photo")
+        voice = message.get("voice")
+        audio = message.get("audio")
         caption = (message.get("caption") or "").strip()
 
         # Handle Commands
         if text.startswith("/"):
             self._handle_command(chat_id, message_id, text)
+            return
+
+        # Handle Voice / Audio (Voice-to-Voice Conversation)
+        if voice or audio:
+            self.send_chat_action(chat_id, "record_voice")
+
+            media_obj = voice or audio
+            file_id = media_obj.get("file_id")
+
+            audio_bytes = self.get_file_bytes(file_id)
+            if not audio_bytes:
+                self.send_message(
+                    chat_id,
+                    "❌ មិនអាចទាញយកសារសំឡេងបានទេ។ សូមព្យាយាមផ្ញើម្តងទៀត។",
+                    reply_to_message_id=message_id
+                )
+                return
+
+            voice_prompt = caption or (
+                "ស្តាប់សារសំឡេងនេះ ហើយឆ្លើយតបខ្លីៗ ធម្មជាតិ ដូចមនុស្សពិតកំពុងជជែកគ្នាតាមទូរស័ព្ទដៃ។ "
+                "ច្បាប់ភាសា៖ បើអ្នកនិយាយនិយាយភាសាខ្មែរ ត្រូវតបជាភាសាខ្មែរ បើនិយាយភាសាបរទេស ត្រូវតបជាភាសាបរទេសនោះវិញភ្លាមៗ។ "
+                "សំខាន់បំផុត៖ ហាមប្រើសញ្ញា Markdown (*, #, `) ឬ Emoji ក្នុងចម្លើយដាច់ខាត ដើម្បីកុំឱ្យម៉ាស៊ីនអានសំឡេងអានឈ្មោះសញ្ញាទាំងនោះ។"
+            )
+
+            mime_type = "audio/ogg" if voice else "audio/mp3"
+            success, answer = self.solver.solve(
+                prompt=voice_prompt,
+                image_bytes=audio_bytes,
+                mime_type=mime_type,
+                chat_id=chat_id,
+                is_voice=True
+            )
+
+            if not success:
+                self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                return
+
+            self.send_chat_action(chat_id, "record_voice")
+            speech_bytes = text_to_speech(answer)
+            if speech_bytes:
+                sent = self.send_voice(chat_id, speech_bytes, reply_to_message_id=message_id)
+                if not sent:
+                    self.send_message(chat_id, answer, reply_to_message_id=message_id)
+            else:
+                self.send_message(chat_id, answer, reply_to_message_id=message_id)
             return
 
         # Handle Photo (Homework Image)
@@ -318,14 +399,15 @@ class TelegramBot:
             welcome_msg = (
                 "👋 *សួស្តីប្អូនៗ និងសិស្សានុសិស្សទាំងអស់គ្នា!*\n\n"
                 "ខ្ញុំជា *Telegram Study Bot* ជំនួយការដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា បំពាក់ដោយបច្ចេកវិទ្យា *Google Gemini Flash* 🧠✨\n\n"
-                "📚 *សមត្ថភាពដោះស្រាយលំហាត់៖*\n"
+                "📚 *សមត្ថភាពចម្បង៖*\n"
+                "• 🎙️ *សន្ទនាដោយសំឡេង (Voice-to-Voice):* ផ្ញើសារសំឡេង (Voice message) មកទីនេះ Bot នឹងស្ដាប់យល់ និងឆ្លើយតបជាសំឡេងមនុស្សពិតៗភ្លាមៗ (គាំទ្រទាំងភាសាខ្មែរ និងភាសាបរទេស)!\n"
                 "• 📸 *ផ្ញើរូបភាពលំហាត់* (ថតរូបពីសៀវភៅ ឬក្រដាសប្រឡង)\n"
                 "• ✍️ *សរសេរសំណួរ ឬសមីការ* ផ្ទាល់ចូលក្នុងប្រអប់សារ\n"
                 "• 🎨 *Render ចម្លើយជារូបភាព HD (KaTeX):* ១ លំហាត់ = ១ រូបភាពពេញទំព័រធំច្បាស់ រូបមន្តគណិតវិទ្យាមានភាគយក របារប្រភាគ និងភាគបែងត្រឹមត្រូវ ១០០%\n"
                 "• 🔬 ដោះស្រាយគ្រប់មុខវិជ្ជា៖ គណិត, រូប, គីមី, ជីវៈ, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...\n"
                 "• 💡 បង្ហាញរូបមន្ត គន្លឹះ និងជំហានដោះស្រាយច្បាស់ៗមួយជំហានម្តងៗ ព្រមទាំងចម្លើយចុងក្រោយពេញលេញ\n\n"
-                "🚀 *របៀបប្រើ៖* គ្រាន់តែថតរូបលំហាត់ ឬវាយអត្ថបទសំណួរផ្ញើមកទីនេះភ្លាមៗ!\n\n"
-                "បញ្ជាបន្ថែម៖ /subjects (មើលមុខវិជ្ជា) | /help (ជំនួយ) | /about (ព័ត៌មាន Bot)"
+                "🚀 *របៀបប្រើ៖* ផ្ញើសារសំឡេង ថតរូបលំហាត់ ឬវាយអត្ថបទសំណួរផ្ញើមកទីនេះភ្លាមៗ!\n\n"
+                "បញ្ជាបន្ថែម៖ /subjects (មុខវិជ្ជា) | /clear (លុបប្រវត្តិ) | /help (ជំនួយ) | /about (ព័ត៌មាន Bot)"
             )
             self.send_message(chat_id, welcome_msg, reply_to_message_id=message_id)
 
