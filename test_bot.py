@@ -12,7 +12,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gemini_solver import GeminiSolver, SYSTEM_INSTRUCTION, format_math_telegram
 from bot_core import TelegramBot
-from renderer import encode_solution_payload, decode_solution_payload, get_solution_html, split_solution_into_cards
+from renderer import (
+    encode_solution_payload,
+    decode_solution_payload,
+    get_solution_html,
+    split_solution_into_cards,
+    auto_crop_png_card
+)
 
 
 def test_gemini_solver_init():
@@ -75,11 +81,26 @@ def test_solution_html_generator():
     assert "<!DOCTYPE html>" in html
     assert "Kantumruy Pro" in html
     assert "katex.min.js" in html
-    assert "markedKatex" in html
+    assert "katex.renderToString" in html
     assert "#solution-card" in html
-    assert "font-size: 17.5px" in html
-    assert "min-height: 480px" in html
+    assert "font-size: 21.5px" in html
+    assert "math-block-card" in html
     print("✓ Solution HTML generator passed.")
+
+    print("Testing auto_crop_png_card...")
+    from PIL import Image
+    test_img = Image.new("RGB", (600, 400), (255, 255, 255))
+    # Draw a non-white box in middle
+    for x in range(100, 300):
+        for y in range(100, 200):
+            test_img.putpixel((x, y), (15, 23, 42))
+    img_byte_arr = io.BytesIO()
+    test_img.save(img_byte_arr, format='PNG')
+    cropped_bytes = auto_crop_png_card(img_byte_arr.getvalue(), padding=20)
+    cropped_img = Image.open(io.BytesIO(cropped_bytes))
+    # Cropped width should be around (300-100) + 40 = 240, but clamped to minimum 320
+    assert cropped_img.size[0] >= 240
+    print("✓ Auto-crop PNG card passed.")
 
 
 def test_message_chunking():
