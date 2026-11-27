@@ -18,7 +18,7 @@ def test_gemini_solver_init():
     solver = GeminiSolver(api_key="test_key", model="gemini-2.5-flash")
     assert solver.api_key == "test_key"
     assert solver.model == "gemini-2.5-flash"
-    assert "គណិតវិទ្យា" in SYSTEM_INSTRUCTION
+    assert "ដោះស្រាយលំហាត់" in SYSTEM_INSTRUCTION
     print("✓ GeminiSolver initialization passed.")
 
 
