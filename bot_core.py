@@ -1,12 +1,14 @@
 """
 Telegram Bot Core Handler
 Handles routing, commands, image processing, and responses for Telegram updates.
+Renders Khmer academic solutions to crisp PNG images with KaTeX math and sends via sendPhoto.
 """
 
 import os
 import requests
 from typing import Dict, Any, List, Optional
-from gemini_solver import GeminiSolver
+from gemini_solver import GeminiSolver, format_math_telegram
+from renderer import render_solution_to_png
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -19,7 +21,7 @@ class TelegramBot:
         self.solver = GeminiSolver()
 
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
-        """Sends typing indicator to let user know bot is working."""
+        """Sends chat action indicator (typing, upload_photo) to let user know bot is working."""
         try:
             requests.post(
                 f"{self.base_url}/sendChatAction",
@@ -68,6 +70,41 @@ class TelegramBot:
                 return False
 
         return True
+
+    def send_photo(
+        self,
+        chat_id: int,
+        photo_bytes: bytes,
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None
+    ) -> bool:
+        """
+        Sends high-DPI photo to Telegram chat via multipart form-data (sendPhoto).
+        """
+        try:
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+            if reply_to_message_id:
+                data["reply_to_message_id"] = reply_to_message_id
+
+            files = {
+                "photo": ("solution.png", photo_bytes, "image/png")
+            }
+
+            resp = requests.post(
+                f"{self.base_url}/sendPhoto",
+                data=data,
+                files=files,
+                timeout=30
+            )
+            if resp.status_code == 200:
+                return True
+            print(f"Error sending photo ({resp.status_code}): {resp.text}")
+            return False
+        except Exception as e:
+            print(f"Exception sending photo: {e}")
+            return False
 
     def get_file_bytes(self, file_id: str) -> Optional[bytes]:
         """Downloads photo file from Telegram servers."""
@@ -138,6 +175,29 @@ class TelegramBot:
 
         return chunks
 
+    def _send_rendered_solution_or_text(
+        self,
+        chat_id: int,
+        answer: str,
+        message_id: Optional[int] = None
+    ) -> None:
+        """
+        Attempts to render the solution into a high-DPI KaTeX image and send via sendPhoto.
+        Falls back to formatted Telegram text message if rendering fails or times out.
+        """
+        self.send_chat_action(chat_id, "upload_photo")
+        png_bytes = render_solution_to_png(answer)
+
+        if png_bytes:
+            caption = "📐 ដំណោះស្រាយលំហាត់ (Google Gemini AI & KaTeX)"
+            sent = self.send_photo(chat_id, png_bytes, caption=caption, reply_to_message_id=message_id)
+            if sent:
+                return
+
+        # Fallback to clean Unicode math text message
+        fallback_text = format_math_telegram(answer)
+        self.send_message(chat_id, fallback_text, reply_to_message_id=message_id)
+
     def handle_update(self, update: Dict[str, Any]) -> None:
         """Processes an incoming Telegram Update dictionary."""
         message = update.get("message") or update.get("edited_message")
@@ -169,7 +229,7 @@ class TelegramBot:
             # Temporary notification
             self.send_message(
                 chat_id,
-                "🔍 *កំពុងពិនិត្យរូបភាព និងគិតដោះស្រាយយ៉ាងម៉ត់ចត់...*\n_សូមរង់ចាំបន្តិច ប្រព័ន្ធ Gemini Flash High Reasoning កំពុងវិភាគ... ⏳_",
+                "🔍 *កំពុងពិនិត្យរូបភាព និងគិតដោះស្រាយយ៉ាងម៉ត់ចត់...*\n_សូមរង់ចាំបន្តិច ប្រព័ន្ធ Gemini Flash High Reasoning កំពុងវិភាគ និង Render រូបមន្ត KaTeX... ⏳_",
                 reply_to_message_id=message_id
             )
 
@@ -185,8 +245,8 @@ class TelegramBot:
             default_photo_prompt = (
                 "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះឱ្យបានចប់សព្វគ្រប់ ១០០% គ្រប់លំហាត់ទាំងអស់ (មានក្បាលលំហាត់ «**[លេខរៀង]. [ប្រធាន]**», "
                 "ដំណោះស្រាយខ្លី ខ្លឹម សម្រួលកត្តារួមឱ្យងាយយល់ និងចម្លើយចុងក្រោយពេញលេញ ហាមដាច់ខាតកុំឱ្យដាច់ក្បាលដាច់កន្ទុយ)។ "
-                "រាល់ប្រភាគឈរត្រូវសរសេរមានភាគយក របារប្រភាគ ─── និងភាគបែង ដាក់ក្នុងប្រអប់ Code block (```) "
-                "និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «ចម្លើយត្រឹមត្រូវគឺ គ. ...»)។"
+                "រូបមន្ត និងសមីការគណិតវិទ្យាត្រូវសរសេរជា LaTeX ($...$ សម្រាប់ inline និង $$...$$ សម្រាប់ display equation "
+                "ប្រភាគប្រើ \\frac{}{} ជានិច្ច) និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «**ចម្លើយត្រឹមត្រូវគឺ គ. ...**»)។"
             )
 
             success, answer = self.solver.solve(
@@ -194,14 +254,22 @@ class TelegramBot:
                 image_bytes=image_bytes,
                 mime_type="image/jpeg"
             )
-            self.send_message(chat_id, answer, reply_to_message_id=message_id)
+            if not success:
+                self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                return
+
+            self._send_rendered_solution_or_text(chat_id, answer, message_id)
             return
 
         # Handle Text (Written Question / Math / Science Exercise)
         if text:
             self.send_chat_action(chat_id, "typing")
             success, answer = self.solver.solve(prompt=text)
-            self.send_message(chat_id, answer, reply_to_message_id=message_id)
+            if not success:
+                self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                return
+
+            self._send_rendered_solution_or_text(chat_id, answer, message_id)
             return
 
     def _handle_command(self, chat_id: int, message_id: int, command_text: str) -> None:
@@ -211,10 +279,11 @@ class TelegramBot:
         if cmd in ["/start", "/start@yourbot"]:
             welcome_msg = (
                 "👋 *សួស្តីប្អូនៗ និងសិស្សានុសិស្សទាំងអស់គ្នា!*\n\n"
-                "ខ្ញុំជា *Telegram Study Bot* ជំនួយការដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា បំពាក់ដោយបច្ចេកវិទ្យា *Google Gemini Flash (High Reasoning)* 🧠✨\n\n"
+                "ខ្ញុំជា *Telegram Study Bot* ជំនួយការដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា បំពាក់ដោយបច្ចេកវិទ្យា *Google Gemini Flash* 🧠✨\n\n"
                 "📚 *សមត្ថភាពដោះស្រាយលំហាត់៖*\n"
                 "• 📸 *ផ្ញើរូបភាពលំហាត់* (ថតរូបពីសៀវភៅ ឬក្រដាសប្រឡង)\n"
                 "• ✍️ *សរសេរសំណួរ ឬសមីការ* ផ្ទាល់ចូលក្នុងប្រអប់សារ\n"
+                "• 🎨 *Render ចម្លើយជារូបភាព HD (KaTeX):* រូបមន្តគណិតវិទ្យាមានភាគយក របារប្រភាគ និងភាគបែងត្រឹមត្រូវស្អាតបាត ១០០%\n"
                 "• 🔬 ដោះស្រាយគ្រប់មុខវិជ្ជា៖ គណិត, រូប, គីមី, ជីវៈ, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...\n"
                 "• 💡 បង្ហាញរូបមន្ត គន្លឹះ និងជំហានដោះស្រាយច្បាស់ៗមួយជំហានម្តងៗ\n\n"
                 "🚀 *របៀបប្រើ៖* គ្រាន់តែថតរូបលំហាត់ ឬវាយអត្ថបទសំណួរផ្ញើមកទីនេះភ្លាមៗ!\n\n"
@@ -231,8 +300,8 @@ class TelegramBot:
                 "2️⃣ *ដោះស្រាយតាមអត្ថបទ (Text):*\n"
                 "• វាយប្រធានលំហាត់ ឬសំណួរចូលដោយផ្ទាល់\n"
                 "• អាចសួរបញ្ជាក់ចំណុចមិនយល់បន្ថែមបាន\n\n"
-                "3️⃣ *មុខវិជ្ជាគាំទ្រ៖*\n"
-                "• ចុច /subjects ដើម្បីមើលបញ្ជីមុខវិជ្ជាទាំងអស់\n\n"
+                "3️⃣ *ទម្រង់រូបភាព Rendered HD:*\n"
+                "• Bot នឹង Render ចម្លើយដែលមានអក្សរខ្មែរ និងរូបមន្ត LaTeX ជារូបភាពកាតពណ៌សស្អាតផ្ញើតាម sendPhoto!\n\n"
                 "💡 *ចំណាំ:* Bot ត្រូវបានរចនាឡើងដើម្បីពន្យល់ឲ្យយល់ មិនមែនគ្រាន់តែបង្ហាញចម្លើយរួចស្រេចនោះទេ!"
             )
             self.send_message(chat_id, help_msg, reply_to_message_id=message_id)
@@ -254,11 +323,11 @@ class TelegramBot:
             self.send_message(chat_id, subjects_msg, reply_to_message_id=message_id)
 
         elif cmd in ["/about", "/about@yourbot"]:
-            active_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+            active_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
             about_msg = (
                 "🤖 *អំពី Telegram Study Bot:*\n\n"
                 f"• *ម៉ូដែល AI:* Google {active_model} (High Reasoning)\n"
-                "• *បច្ចេកវិទ្យា:* Vercel Serverless + Google Gemini Vision API\n"
+                "• *បច្ចេកវិទ្យា:* Vercel Serverless + Google Gemini Vision API + KaTeX High-DPI Renderer\n"
                 "• *សមត្ថភាព:* ដោះស្រាយលំហាត់ សំណួរស្រាវជ្រាវ និងវិញ្ញាសាគ្រប់មុខវិជ្ជា\n"
                 "• *ស្ថានភាព Server:* កំពុងដំណើរការ 🟢 (Online)\n\n"
                 "បង្កើតឡើងដើម្បីជួយសម្រួលដល់ការសិក្សារបស់សិស្សានុសិស្សកម្ពុជា! 🇰🇭❤️"

@@ -1,7 +1,7 @@
 """
 Gemini Homework Solver Engine
 Uses Google Gemini API to solve academic exercises across all subjects.
-Formats all equations in clean, textbook-quality math specifically optimized for Telegram.
+Formats all equations in textbook-quality LaTeX math ($...$ and $$...$$) for KaTeX rendering.
 All solutions are complete 100% from start to finish (never truncated or cut off),
 with smart algebraic simplifications, balanced brackets, and clean compact layouts.
 """
@@ -20,119 +20,116 @@ except ImportError:
     pass
 
 SYSTEM_INSTRUCTION = """
-អ្នកជាគ្រូជំនួយដោះស្រាយលំហាត់គំរូកម្រិតខ្ពស់ ឆ្លើយចំៗ ត្រឹមត្រូវ ស្អាតបាត និងងាយយល់បំផុត។
+អ្នកជាគ្រូជំនួយដោះស្រាយលំហាត់គំរូកម្រិតខ្ពស់ ឆ្លើយចំៗ ត្រឹមត្រូវ ស្អាតបាត និងងាយយល់បំផុតជាភាសាខ្មែរ។
 
 ច្បាប់ដែកថែបដើម្បីកុំឱ្យដំណោះស្រាយ «ដាច់ក្បាលដាច់កន្ទុយ» ឬ «ពិបាកមើល» (CORE RULES):
 ១. ដំណោះស្រាយពេញលេញ ១០០% តាំងពីដើមដល់ចប់ (COMPLETE FROM HEAD TO TAIL):
    - រាល់លំហាត់ទាំងអស់ ត្រូវតែមានដំណោះស្រាយពេញលេញតាំងពីដើមរហូតដល់ចុងបញ្ចប់៖
-     • ក្បាលលំហាត់៖ **[លេខរៀង]. [ប្រធានលំហាត់]** (ឧ. **២៩. សរសេរចំនួនកុំផ្លិច Z = ... ជាទម្រង់ត្រីកោណមាត្រ**)
+     • ក្បាលលំហាត់៖ **[លេខរៀង]. [ប្រធានលំហាត់]** (ឧ. **២៩. សរសេរចំនួនកុំផ្លិច $Z = ...$ ជាទម្រង់ត្រីកោណមាត្រ**)
      • ជំហានគណនា៖ បង្ហាញលំហូរគណនាច្បាស់ៗមួយៗ
-     • ចម្លើយចុងក្រោយ៖ បញ្ចប់ដោយចម្លើយចុងក្រោយពេញលេញជានិច្ច (ឧ. «ចម្លើយត្រឹមត្រូវគឺ គ. ...» ឬ «ដូចនេះ Z = ...»)
+     • ចម្លើយចុងក្រោយ៖ បញ្ចប់ដោយចម្លើយចុងក្រោយពេញលេញជានិច្ច (ឧ. «**ចម្លើយត្រឹមត្រូវគឺ គ. ...**» ឬ «**ដូចនេះ $Z = ...$**»)
    - ហាមដាច់ខាតកុំកាត់ផ្តាច់ពាក់កណ្តាលទី ឬបាត់ចម្លើយចុងក្រោយ (ហាមដាច់ខាតកុំឱ្យដាច់ក្បាលដាច់កន្ទុយ)!
 
-២. ជ្រើសរើសវិធីដោះស្រាយខ្លី ឆ្លាតវៃ និងស្រួលយល់បំផុត (SMART & DIRECT METHODS):
+២. ទម្រង់រូបមន្តគណិតវិទ្យា LaTeX (LATEX MATH FORMAT):
+   - ត្រូវប្រើ LaTeX ត្រឹមត្រូវជានិច្ច៖
+     • រូបមន្តក្នុងអត្ថបទ (inline) ត្រូវប្រើ `$ ... $` (ឧ. `$x = 2$`, `$q = 25$`, `$I = \\frac{\\pi - 2}{8}$`)
+     • សមីការ ឬបន្ទាត់គណនាធំ (display) ត្រូវប្រើ `$$ ... $$`
+   - រាល់ប្រភាគ ត្រូវតែប្រើ `\\frac{ភាគយក}{ភាគបែង}` ជានិច្ច (មានភាគយកខាងលើ របារប្រភាគនៅកណ្តាល និងភាគបែងខាងក្រោម)! ហាមដាច់ខាតកុំប្រើសញ្ញា `/` សម្រាប់ប្រភាគបញ្ឈរ។
+   - សញ្ញាគណិតវិទ្យា៖ ឫសប្រើ `\\sqrt{...}`, អាំងតេក្រាលប្រើ `\\int`, លីមីតប្រើ `\\lim_{...}`, ត្រីកោណមាត្រប្រើ `\\sin`, `\\cos`, `\\tan`, លោការីតប្រើ `\\log_a(x)`, `\\ln(x)`។
+   - បំបែកលំហាត់នីមួយៗដោយបន្ទាត់ផ្តេក `---`។
+
+៣. ជ្រើសរើសវិធីដោះស្រាយខ្លី ឆ្លាតវៃ និងស្រួលយល់បំផុត (SMART & DIRECT METHODS):
    - បើកន្សោមអាចសម្រួលបាន ត្រូវសម្រួលកត្តារួមជាមុនសិនជានិច្ច!
      ឧទាហរណ៍ជាក់ស្តែង លំហាត់ ២៩៖
-     Z = (5√3 - 5i) / (-√6 + i√2)
-       = [ 5(√3 - i) ] / [ -√2(√3 - i) ]
-       = - 5 / √2
-       = - (5√2) / 2
+     $$Z = \\frac{5\\sqrt{3} - 5i}{-\\sqrt{6} + i\\sqrt{2}} = \\frac{5(\\sqrt{3} - i)}{-\\sqrt{2}(\\sqrt{3} - i)} = -\\frac{5}{\\sqrt{2}} = -\\frac{5\\sqrt{2}}{2}$$
      រួចសរសេរជាទម្រង់ត្រីកោណមាត្រភ្លាមៗ៖
-     Z = (5√2)/2 · ( cos π + i sin π )
-   - ហាមដាច់ខាតកុំប្រើវិធីគណនាក្បួនវែងអន្លាយ ស្មុគស្មាញ (ដូចជាគណនាប៉ូលែភាគយក រួចគណនាប៉ូលែភាគបែង...) ដែលនាំឱ្យវែងរញ៉េរញ៉ៃ និងកាត់ផ្តាច់ពាក់កណ្តាលទី។
-
-៣. ដំណោះស្រាយមានលំហូររលូន មិនបំបែកជាប្រអប់កូដច្រើនកំប៉ិកកំប៉ុក (UNIFIED FLOW):
-   - ក្នុងលំហាត់មួយ ដំណោះស្រាយគណនាត្រូវសរសេរឱ្យមានលំហូរបន្តគ្នាជាប់ជានិច្ច កុំបំបែកជាប្រអប់តូចៗ ៣-៤ ប្រអប់ដែលនាំឱ្យមើលទៅដាច់ក្បាលដាច់កន្ទុយ។
-   - បើមានប្រភាគឈរ ត្រូវសរសេរឱ្យស្មើជួរស្អាត មានភាគយក របារប្រភាគ ─── និងភាគបែង។
-   - គម្លាតជួរលើក្រោមត្រូវនៅកៀកគ្នាសមល្មម មិនឱ្យឃ្លាតឆ្ងាយពីគ្នាពេក។
+     $$Z = \\frac{5\\sqrt{2}}{2} ( \\cos \\pi + i \\sin \\pi )$$
+   - ហាមដាច់ខាតកុំប្រើវិធីគណនាក្បួនវែងអន្លាយ ស្មុគស្មាញ ដែលនាំឱ្យវែងរញ៉េរញ៉ៃ។
 
 ៤. ហាមពាក្យអូសបន្លាយ៖
    - ហាមសរសេរពាក្យស្វាគមន៍ («សួស្តី...»)
    - ហាមសរសេរ «**ដំណោះស្រាយ៖**» ឬ «- ដំណោះស្រាយ៖»
-   - ហាមសរសេរ «👉 **ចម្លើយចុងក្រោយ៖**» ឬ «👉 **ដូចនេះ៖**»
    - ចូលដោះស្រាយផ្ទាល់ភ្លាមៗតាមគំរូខាងក្រោម។
 
 គំរូស្តង់ដារទាំង ៤ (FOLLOW THESE EXACTLY):
 
 គំរូទី ១ (អាំងតេក្រាល):
-**២៥. គណនាអាំងតេក្រាល I = ∫₀^(π/4) sin² x dx**
-ប្រើរូបមន្តបន្ថយស្វ័យគុណត្រីកោណមាត្រ sin² x = (1 - cos 2x)/2 គេបាន៖
-```
-          π/4  1 - cos 2x            1 [        sin 2x ] π/4
-I  =   ∫     ──────────── dx  =  ─ [ x  -   ────── ]
-          0        2                 2 [          2    ] 0
+**២៥. គណនាអាំងតេក្រាល $I = \\int_0^{\\frac{\\pi}{4}} \\sin^2 x \\, dx$**
 
-          1 [ ( π/4 - sin(2 · π/4)/2 ) - ( 0 - sin(0)/2 ) ]
-   =  ─
-          2
+ប្រើរូបមន្តបន្ថយស្វ័យគុណត្រីកោណមាត្រ $\\sin^2 x = \\frac{1 - \\cos 2x}{2}$ គេបាន៖
 
-          1   π    sin(π/2)        1   π   1        1   π - 2        π - 2
-   =  ─ ( ─  - ──────── )  =  ─ ( ─ - ─ )  =  ─ ( ───── )  =  ─────
-          2   4       2            2   4   2        2     4            8
-```
-ចម្លើយត្រឹមត្រូវគឺ គ. I = (π - 2)/8
+$$I = \\int_0^{\\frac{\\pi}{4}} \\frac{1 - \\cos 2x}{2} \\, dx = \\frac{1}{2} \\left[ x - \\frac{\\sin 2x}{2} \\right]_0^{\\frac{\\pi}{4}}$$
+
+ជំនួសកាលកំណត់ពី $0$ ដល់ $\\frac{\\pi}{4}$៖
+
+$$I = \\frac{1}{2} \\left[ \\left( \\frac{\\pi}{4} - \\frac{\\sin\\left(2 \\cdot \\frac{\\pi}{4}\\right)}{2} \\right) - \\left( 0 - \\frac{\\sin 0}{2} \\right) \\right]$$
+
+$$I = \\frac{1}{2} \\left( \\frac{\\pi}{4} - \\frac{\\sin \\frac{\\pi}{2}}{2} \\right) = \\frac{1}{2} \\left( \\frac{\\pi}{4} - \\frac{1}{2} \\right) = \\frac{1}{2} \\left( \\frac{\\pi - 2}{4} \\right) = \\frac{\\pi - 2}{8}$$
+
+**ចម្លើយត្រឹមត្រូវគឺ គ. $I = \\frac{\\pi - 2}{8}$**
+
+---
 
 គំរូទី ២ (លីមីត):
-**២៦. គណនាលីមីត lim_{x→+∞} ((x+3)/(x-1))^(x+2)**
+**២៦. គណនាលីមីត $\\lim_{x \\to +\\infty} \\left(\\frac{x+3}{x-1}\\right)^{x+2}$**
+
 បំបែកប្រភាគខាងក្នុងវង់ក្រចក៖
-```
-x + 3     (x - 1) + 4           4
-─────  =  ───────────  =  1 + ─────
-x - 1        x - 1            x - 1
-```
+
+$$\\frac{x+3}{x-1} = \\frac{(x-1)+4}{x-1} = 1 + \\frac{4}{x-1}$$
+
 គេបាន៖
-```
-lim_{x→+∞} ( 1 + 4/(x - 1) )^(x+2)
-```
-តាង u = (x - 1)/4 ⇒ x - 1 = 4u ⇒ x + 2 = 4u + 3 (ពេល x → +∞ នោះ u → +∞) ៖
-```
-lim_{u→+∞} ( 1 + 1/u )^(4u+3) = lim_{u→+∞} [( 1 + 1/u )^u]⁴ · ( 1 + 1/u )³
-                              = e⁴ · 1³ = e⁴
-```
-ចម្លើយត្រឹមត្រូវគឺ e⁴
+
+$$\\lim_{x \\to +\\infty} \\left( 1 + \\frac{4}{x-1} \\right)^{x+2}$$
+
+តាង $u = \\frac{x-1}{4} \\implies x - 1 = 4u \\implies x + 2 = 4u + 3$ (ពេល $x \\to +\\infty$ នោះ $u \\to +\\infty$)៖
+
+$$\\lim_{u \\to +\\infty} \\left( 1 + \\frac{1}{u} \\right)^{4u+3} = \\lim_{u \\to +\\infty} \\left[\\left(1 + \\frac{1}{u}\\right)^u\\right]^4 \\cdot \\left(1 + \\frac{1}{u}\\right)^3 = e^4 \\cdot 1^3 = e^4$$
+
+**ចម្លើយត្រឹមត្រូវគឺ $e^4$**
+
+---
 
 គំរូទី ៣ (សមីការលោការីត):
-**២៧. ដោះស្រាយសមីការ log₃(x + 1) + log₃(x + 3) = 1**
+**២៧. ដោះស្រាយសមីការ $\\log_3(x+1) + \\log_3(x+3) = 1$**
+
 ○ លក្ខខណ្ឌកំណត់៖
-```
-⎧ x + 1 > 0       ⎧ x > -1
-⎨             ⇒   ⎨         ⇒  x > -1
-⎩ x + 3 > 0       ⎩ x > -3
-```
+$$\\begin{cases} x + 1 > 0 \\\\ x + 3 > 0 \\end{cases} \\implies \\begin{cases} x > -1 \\\\ x > -3 \\end{cases} \\implies x > -1$$
+
 ○ ដោះស្រាយសមីការ៖
-```
-log₃ [(x + 1)(x + 3)] = 1
-(x + 1)(x + 3) = 3¹
-x² + 4x + 3 = 3
-x² + 4x = 0
-x(x + 4) = 0  ⇒  ⎡ x = 0
-                 ⎣ x = -4
-```
-តម្លៃ x = -4 មិនយក (ព្រោះ x > -1)
-ដូចនេះ x = 0
+$$\\log_3 [(x+1)(x+3)] = 1$$
+$$(x+1)(x+3) = 3^1$$
+$$x^2 + 4x + 3 = 3$$
+$$x^2 + 4x = 0$$
+$$x(x+4) = 0 \\implies \\begin{bmatrix} x = 0 \\\\ x = -4 \\end{bmatrix}$$
+
+តម្លៃ $x = -4$ មិនយក (ព្រោះមិនស្របនឹងលក្ខខណ្ឌ $x > -1$)
+
+**ដូចនេះ $x = 0$**
+
+---
 
 គំរូទី ៤ (ចំនួនកុំផ្លិច):
-**២៨. រកម៉ូឌុលនៃចំនួនកុំផ្លិច Z = √2 + i√6**
-តាមរូបមន្តម៉ូឌុលនៃចំនួនកុំផ្លិច Z = a + bi គឺ r = |Z| = √(a² + b²) ៖
-```
-r = √((√2)² + (√6)²) = √(2 + 6) = √8 = √(4 × 2) = 2√2
-```
-ចម្លើយត្រឹមត្រូវគឺ គ. r = 2√2
+**២៨. រកម៉ូឌុលនៃចំនួនកុំផ្លិច $Z = \\sqrt{2} + i\\sqrt{6}$**
 
-**២៩. សរសេរចំនួនកុំផ្លិច Z = (5√3 - 5i) / (-√6 + i√2) ជាទម្រង់ត្រីកោណមាត្រ**
-សម្រួលកន្សោម Z ជាមុនសិន៖
-```
-    5(√3 - i)         5(√3 - i)           5       5√2
-Z = ───────────  =  ────────────  =  - ─────  =  ─────
-    √2(-√3 + i)     -√2(√3 - i)          √2        2
-```
-សរសេរចំនួនពិតអវិជ្ជមាន - (5√2)/2 ជាទម្រង់ត្រីកោណមាត្រ (ម៉ូឌុល r = (5√2)/2 > 0 និងអាគុយម៉ង់ θ = π) ៖
-```
-        5√2                          5√2
-Z =  - ─────  =  ────── ( -1 + 0i ) = ────── ( cos π + i sin π )
-         2          2                    2
-```
-ចម្លើយត្រឹមត្រូវគឺ គ. Z = (5√2)/2 (cos π + i sin π)
+តាមរូបមន្តម៉ូឌុលនៃចំនួនកុំផ្លិច $Z = a + bi$ គឺ $r = |Z| = \\sqrt{a^2 + b^2}$ ៖
+
+$$r = \\sqrt{(\\sqrt{2})^2 + (\\sqrt{6})^2} = \\sqrt{2 + 6} = \\sqrt{8} = \\sqrt{4 \\times 2} = 2\\sqrt{2}$$
+
+**ចម្លើយត្រឹមត្រូវគឺ គ. $r = 2\\sqrt{2}$**
+
+---
+
+**២៩. សរសេរចំនួនកុំផ្លិច $Z = \\frac{5\\sqrt{3}-5i}{-\\sqrt{6}+i\\sqrt{2}}$ ជាទម្រង់ត្រីកោណមាត្រ**
+
+សម្រួលកន្សោម $Z$ ជាមុនសិន៖
+
+$$Z = \\frac{5(\\sqrt{3}-i)}{\\sqrt{2}(-\\sqrt{3}+i)} = \\frac{5(\\sqrt{3}-i)}{-\\sqrt{2}(\\sqrt{3}-i)} = -\\frac{5}{\\sqrt{2}} = -\\frac{5\\sqrt{2}}{2}$$
+
+សរសេរចំនួនពិតអវិជ្ជមាន $-\\frac{5\\sqrt{2}}{2}$ ជាទម្រង់ត្រីកោណមាត្រ (ម៉ូឌុល $r = \\frac{5\\sqrt{2}}{2} > 0$ និងអាគុយម៉ង់ $\\theta = \\pi$) ៖
+
+$$Z = \\frac{5\\sqrt{2}}{2}(-1 + 0i) = \\frac{5\\sqrt{2}}{2}(\\cos \\pi + i \\sin \\pi)$$
+
+**ចម្លើយត្រឹមត្រូវគឺ គ. $Z = \\frac{5\\sqrt{2}}{2}(\\cos \\pi + i \\sin \\pi)$**
 """.strip()
 
 
@@ -162,9 +159,8 @@ def extract_braced_content(text: str, start_idx: int) -> Tuple[Optional[str], in
 def replace_latex_fractions_and_roots(text: str) -> str:
     """
     Robustly parses and converts LaTeX \\frac{...}{...} and \\sqrt{...}
-    even with nested braces or complex expressions.
+    even with nested braces or complex expressions for plain text fallback.
     """
-    # 1. Parse \frac{num}{den}
     result = []
     i = 0
     while i < len(text):
@@ -177,7 +173,6 @@ def replace_latex_fractions_and_roots(text: str) -> str:
                 if den is not None:
                     num = replace_latex_fractions_and_roots(num)
                     den = replace_latex_fractions_and_roots(den)
-                    # Clean representation
                     result.append(f"({num}) / ({den})")
                     i = end_i
                     continue
@@ -192,7 +187,6 @@ def replace_latex_fractions_and_roots(text: str) -> str:
         i += 1
 
     s = "".join(result)
-    # Simplify √(digit) -> √digit (e.g. √(2) -> √2)
     s = re.sub(r"√\((\d+)\)", r"√\1", s)
     s = re.sub(r"√\(([a-zA-Z])\)", r"√\1", s)
     return s
@@ -224,7 +218,6 @@ def compact_vertical_spacing(text: str) -> str:
     parts = text.split("```")
     for i in range(len(parts)):
         if i % 2 == 1:
-            # Inside code block: remove redundant blank lines
             lines = parts[i].split("\n")
             while lines and not lines[0].strip():
                 lines.pop(0)
@@ -240,7 +233,6 @@ def compact_vertical_spacing(text: str) -> str:
                 prev_empty = is_empty
             parts[i] = "\n" + "\n".join(compact_lines) + "\n"
         else:
-            # Outside code block: ensure no excessive gap right before/after ```
             parts[i] = re.sub(r"\n{2,}$", "\n", parts[i])
             parts[i] = re.sub(r"^\n{2,}", "\n", parts[i])
 
@@ -252,19 +244,14 @@ def compact_vertical_spacing(text: str) -> str:
 
 def format_math_telegram(text: str) -> str:
     """
-    Sanitizes any remaining raw LaTeX math expressions into clean Unicode math for Telegram.
-    Guarantees no raw frac or LaTeX leak, clean vertical fractions, and compact spacing.
+    Sanitizes any LaTeX math expressions into clean Unicode math for Telegram text fallback.
     """
     if not text:
         return ""
 
-    # 1. Clean multi-line bracket art
     text = sanitize_brackets_and_symbols(text)
-
-    # 2. Remove $ and $$ delimiters
     text = text.replace("$$", "").replace("$", "")
 
-    # 3. Fixed string replacements for LaTeX
     string_replacements = [
         ("\\left(", "("), ("\\right)", ")"),
         ("\\left[", "["), ("\\right]", "]"),
@@ -296,42 +283,31 @@ def format_math_telegram(text: str) -> str:
         "n": "ⁿ", "x": "ˣ", "+": "⁺", "-": "⁻", "y": "ʸ"
     }
 
-    # Logarithms: \log_3 or \log3
     text = re.sub(r"\\log_?\{?(\d+)\}?", lambda m: "log" + "".join(subs.get(c, c) for c in m.group(1)), text)
     text = re.sub(r"\\ln", "ln", text)
     text = re.sub(r"\\log", "log", text)
 
-    # Convert any lingering LaTeX \frac and \sqrt robustly
     text = replace_latex_fractions_and_roots(text)
 
-    # Integrals: \int_0^{\pi/4} -> ∫[0 → π/4]
     text = re.sub(r"\\int_?\{?([^}^\s\\]*)\}?\^\{?([^}^\s\\]*)\}?", r"∫[\1 → \2] ", text)
     text = re.sub(r"\\int0\^\{?([^}^\s\\]*)\}?", r"∫[0 → \1] ", text)
     text = re.sub(r"\\int", "∫", text)
 
-    # Limits: \lim_{x \to +\infty} -> lim(x → +∞)
     text = re.sub(r"\\lim_\{([^}]+)\}", r"lim(\1)", text)
     text = re.sub(r"\\lim", "lim", text)
 
-    # Clean cases environment
     text = text.replace("\\begin{cases}", "").replace("\\end{cases}", "")
+    text = text.replace("\\begin{bmatrix}", "").replace("\\end{bmatrix}", "")
 
-    # Clean text{} tags
     text = re.sub(r"\\text\{([^}]*)\}", r"\1", text)
     text = re.sub(r"\\mathrm\{([^}]*)\}", r"\1", text)
     text = re.sub(r"\\mathbf\{([^}]*)\}", r"\1", text)
 
-    # Superscripts: x^2 -> x², x^{10} -> x¹⁰, e^4 -> e⁴
     text = re.sub(r"\^\{([0-9nx\+\-]+)\}", lambda m: "".join(sups.get(c, c) for c in m.group(1)), text)
     text = re.sub(r"\^([0-9nx\+\-])", lambda m: sups.get(m.group(1), "^" + m.group(1)), text)
 
-    # Clean any lingering lone backslashes
     text = re.sub(r"\\([a-zA-Z]+)", r"\1", text)
-
-    # Clean consecutive duplicate code block markers ``` ```
     text = re.sub(r"```\s*```", "", text)
-
-    # Eliminate excessive vertical gaps and tightens spacing
     text = compact_vertical_spacing(text)
 
     return text.strip()
@@ -342,7 +318,6 @@ class GeminiSolver:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self.primary_model = model or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
         self.model = self.primary_model
-        # Candidate models with gemini-3.5-flash-lite prioritized for fast 1-2s response and high quota
         self.candidate_models = [
             self.primary_model,
             "gemini-3.5-flash-lite",
@@ -359,7 +334,7 @@ class GeminiSolver:
         mime_type: str = "image/jpeg"
     ) -> Tuple[bool, str]:
         """
-        Sends question/exercise to Gemini API and returns (success, formatted_clean_math_text).
+        Sends question/exercise to Gemini API and returns (success, markdown_latex_text).
         """
         if not self.api_key:
             return False, "❌ Error: GEMINI_API_KEY is not set. Please configure your API key in .env or Vercel Environment Variables."
@@ -378,8 +353,8 @@ class GeminiSolver:
         default_prompt = (
             "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះឱ្យបានចប់សព្វគ្រប់ ១០០% គ្រប់លំហាត់ទាំងអស់ (មានក្បាលលំហាត់ «**[លេខរៀង]. [ប្រធាន]**», "
             "ដំណោះស្រាយខ្លី ខ្លឹម សម្រួលកត្តារួមឱ្យងាយយល់ និងចម្លើយចុងក្រោយពេញលេញ ហាមដាច់ខាតកុំឱ្យដាច់ក្បាលដាច់កន្ទុយ)។ "
-            "រាល់ប្រភាគឈរត្រូវសរសេរមានភាគយក របារប្រភាគ ─── និងភាគបែង ដាក់ក្នុងប្រអប់ Code block (```) "
-            "និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «ចម្លើយត្រឹមត្រូវគឺ គ. ...»)។"
+            "រូបមន្ត និងសមីការគណិតវិទ្យាត្រូវសរសេរជា LaTeX ($...$ សម្រាប់ inline និង $$...$$ សម្រាប់ display equation "
+            "ប្រភាគប្រើ \\frac{}{} ជានិច្ច) និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «**ចម្លើយត្រឹមត្រូវគឺ គ. ...**»)។"
         )
         text_content = prompt.strip() if prompt else default_prompt
         parts.append({"text": text_content})
@@ -417,7 +392,8 @@ class GeminiSolver:
                 if resp.status_code == 200:
                     ok, raw_text = self._extract_text(resp.json())
                     if ok:
-                        return True, format_math_telegram(raw_text)
+                        # Return clean markdown text with LaTeX preserved for KaTeX rendering
+                        return True, raw_text.strip()
                     return False, raw_text
 
                 # Fallback to next model if quota limit (429), high demand (503), or not found (404)
@@ -447,12 +423,10 @@ class GeminiSolver:
                 return False, "⚠️ មិនមានចម្លើយពីប្រព័ន្ធឡើយ (No response candidate)."
 
             parts = candidates[0].get("content", {}).get("parts", [])
-            # Filter out thinking parts so only actual answer is presented
             texts = [p.get("text", "") for p in parts if "text" in p and not p.get("thought", False)]
             reply = "\n".join(texts).strip()
 
             if not reply:
-                # If all parts were thought or empty, grab any text
                 texts = [p.get("text", "") for p in parts if "text" in p]
                 reply = "\n".join(texts).strip()
 
