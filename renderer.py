@@ -1,8 +1,11 @@
 """
 HTML/KaTeX to PNG Image Renderer
-Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, compact 12px full-width PNG images.
-Refined 12px typography ensures that the entire detailed solution and final answer are 100% visible without clipping.
-Uses fullpage capture pipeline (Microlink -> Thum.io fullpage -> S-Shot) so nothing is cut off at the bottom.
+Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, full-width PNG images.
+Features:
+- Zero-margin 800px full-width layout with consistent minimum height (no tiny short cards).
+- Crisp 17.5px Khmer typography with dark contrast (#0f172a) and KaTeX 1.2em math.
+- Full-page capture pipeline (Thum.io fullpage 800px -> Microlink -> S-Shot) ensuring
+  every step and final answer is 100% visible and razor-sharp.
 """
 
 import os
@@ -97,8 +100,8 @@ def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1800
 
 def get_solution_html(markdown_text: str) -> str:
     """
-    Generates high-contrast HTML document with 12px Kantumruy Pro font,
-    crisp KaTeX math, and fullpage-friendly layout ensuring all steps and final answer are visible.
+    Generates high-contrast HTML document with 800px full-width card layout,
+    crisp 17.5px Kantumruy Pro font, KaTeX 1.2em math, and min-height: 480px.
     """
     encoded_b64 = base64.b64encode(markdown_text.encode("utf-8")).decode("ascii")
 
@@ -106,7 +109,7 @@ def get_solution_html(markdown_text: str) -> str:
 <html lang="km">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=800, initial-scale=1.0">
   <title>ដំណោះស្រាយលំហាត់</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -118,98 +121,103 @@ def get_solution_html(markdown_text: str) -> str:
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
+    html, body {{
+      width: 800px;
+      margin: 0;
+      padding: 0;
       background: #ffffff;
-      font-family: 'Kantumruy Pro', -apple-system, BlinkMacSystemFont, sans-serif;
-      padding: 12px;
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-      color: #090d16;
+      font-family: 'Kantumruy Pro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #0f172a;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
     }}
     #solution-card {{
+      box-sizing: border-box;
+      width: 800px;
+      min-height: 480px;
+      padding: 32px 38px;
       background: #ffffff;
-      width: 640px;
-      padding: 20px 24px;
-      border-radius: 14px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
-      border: 1.5px solid #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }}
     .badge {{
       display: inline-flex;
       align-items: center;
       gap: 6px;
       background: #f0fdf4;
-      color: #15803d;
-      font-size: 11.5px;
+      color: #166534;
+      font-size: 14px;
       font-weight: 700;
-      padding: 4px 12px;
+      padding: 5px 14px;
       border-radius: 9999px;
-      margin-bottom: 12px;
-      border: 1px solid #86efac;
+      margin-bottom: 16px;
+      border: 1.5px solid #86efac;
+      width: fit-content;
     }}
     #content-body {{
-      font-size: 12px;
-      line-height: 1.62;
+      font-size: 17.5px;
+      line-height: 1.75;
       color: #0f172a;
       font-weight: 500;
+      flex-grow: 1;
     }}
     #content-body h1, #content-body h2, #content-body h3 {{
       color: #020617;
-      margin: 10px 0 6px 0;
-      font-size: 14.5px;
+      margin: 12px 0 8px 0;
+      font-size: 21px;
       font-weight: 800;
     }}
     #content-body p {{
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }}
     #content-body strong {{
       color: #020617;
-      font-size: 13px;
+      font-size: 18.5px;
       font-weight: 800;
     }}
     #content-body hr {{
       border: none;
-      border-top: 1px dashed #cbd5e1;
-      margin: 12px 0;
+      border-top: 1.5px dashed #cbd5e1;
+      margin: 16px 0;
     }}
     #content-body ul, #content-body ol {{
-      margin: 6px 0 8px 18px;
+      margin: 8px 0 10px 22px;
     }}
     #content-body li {{
-      margin-bottom: 4px;
+      margin-bottom: 5px;
     }}
     .katex {{
-      font-size: 1.15em !important;
+      font-size: 1.2em !important;
     }}
     .katex-display {{
-      margin: 8px 0 !important;
-      padding: 2px 0;
-      font-size: 1.15em !important;
+      margin: 12px 0 !important;
+      padding: 4px 0;
+      font-size: 1.18em !important;
       overflow-x: auto;
       overflow-y: hidden;
     }}
     pre, code {{
       font-family: 'Kantumruy Pro', monospace;
       background: #f8fafc;
-      border-radius: 6px;
-      font-size: 11.5px;
+      border-radius: 8px;
+      font-size: 15.5px;
     }}
     pre {{
-      padding: 8px 12px;
-      margin: 8px 0;
+      padding: 10px 14px;
+      margin: 10px 0;
       border: 1px solid #cbd5e1;
       overflow-x: auto;
     }}
     .footer-watermark {{
-      margin-top: 14px;
-      padding-top: 8px;
-      border-top: 1px solid #f1f5f9;
+      margin-top: 20px;
+      padding-top: 12px;
+      border-top: 1px solid #e2e8f0;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 10.5px;
+      font-size: 12.5px;
       font-weight: 600;
       color: #64748b;
     }}
@@ -217,11 +225,13 @@ def get_solution_html(markdown_text: str) -> str:
 </head>
 <body>
   <div id="solution-card">
-    <div class="badge">
-      <span>✨</span>
-      <span>ដំណោះស្រាយលំហាត់ • Telegram Study Bot</span>
+    <div>
+      <div class="badge">
+        <span>✨</span>
+        <span>ដំណោះស្រាយលំហាត់ • Telegram Study Bot</span>
+      </div>
+      <div id="content-body"></div>
     </div>
-    <div id="content-body"></div>
     <div class="footer-watermark">
       <span>Bot: @agent123_ai_bot</span>
       <span>Google Gemini AI &amp; KaTeX High-DPI</span>
@@ -269,22 +279,32 @@ def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[by
     """
     Renders solution markdown (Khmer + KaTeX LaTeX) into a high-DPI, full-width PNG image.
     Uses multi-engine pipeline with fullpage capture:
-      1. Microlink API (Retina 2x, crispest)
-      2. Thum.io fullpage API (Free, high-speed, no rate limits, full-height)
+      1. Thum.io fullpage 800px (fast, reliable, free, full-height, full-width, zero rate limits)
+      2. Microlink API (Retina 2x fallback)
       3. Mini s-shot API (Emergency fallback)
     """
     try:
         payload = encode_solution_payload(markdown_text)
         solution_url = f"{VERCEL_HOST}/solution?c={payload}"
 
-        # 1. Try Microlink (Retina 2x)
+        # 1. Try Thum.io fullpage 800px (fast, full-height, zero rate limits)
+        try:
+            thum_url = f"https://image.thum.io/get/fullpage/width/800/noanimate/{solution_url}"
+            resp = requests.get(thum_url, timeout=18)
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                return resp.content
+            print(f"[Renderer Thum Status] {resp.status_code}")
+        except Exception as e:
+            print(f"[Renderer Thum Error] {e}")
+
+        # 2. Fallback to Microlink (Retina 2x)
         try:
             microlink_params = {
                 "url": solution_url,
                 "screenshot": "true",
                 "embed": "screenshot.url",
                 "element": "#solution-card",
-                "viewport.width": "720",
+                "viewport.width": "800",
                 "viewport.deviceScaleFactor": "2",
                 "waitForTimeout": "1000"
             }
@@ -297,19 +317,9 @@ def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[by
         except Exception as e:
             print(f"[Renderer Microlink Error] {e}")
 
-        # 2. Fallback to Thum.io fullpage (fast, reliable, free, full-height capture)
-        try:
-            thum_url = f"https://image.thum.io/get/fullpage/width/720/noanimate/{solution_url}"
-            resp = requests.get(thum_url, timeout=18)
-            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
-                return resp.content
-            print(f"[Renderer Thum Status] {resp.status_code}")
-        except Exception as e:
-            print(f"[Renderer Thum Error] {e}")
-
         # 3. Fallback to S-Shot
         try:
-            sshot_url = f"https://mini.s-shot.ru/1024x768/PNG/720/?{solution_url}"
+            sshot_url = f"https://mini.s-shot.ru/1024x768/PNG/800/?{solution_url}"
             resp = requests.get(sshot_url, timeout=15)
             if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
                 return resp.content

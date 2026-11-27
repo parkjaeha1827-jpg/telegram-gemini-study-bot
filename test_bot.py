@@ -77,7 +77,8 @@ def test_solution_html_generator():
     assert "katex.min.js" in html
     assert "markedKatex" in html
     assert "#solution-card" in html
-    assert "font-size: 12px" in html
+    assert "font-size: 17.5px" in html
+    assert "min-height: 480px" in html
     print("✓ Solution HTML generator passed.")
 
 
