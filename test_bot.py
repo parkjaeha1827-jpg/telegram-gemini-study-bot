@@ -1,6 +1,6 @@
 """
 Unit and Integration Tests for Telegram Gemini Solver Bot
-Verifies imports, classes, commands, KaTeX rendering, and solution endpoints.
+Verifies imports, classes, commands, KaTeX rendering, card splitting, and solution endpoints.
 """
 
 import os
@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from gemini_solver import GeminiSolver, SYSTEM_INSTRUCTION, format_math_telegram
 from bot_core import TelegramBot
-from renderer import encode_solution_payload, decode_solution_payload, get_solution_html
+from renderer import encode_solution_payload, decode_solution_payload, get_solution_html, split_solution_into_cards
 
 
 def test_gemini_solver_init():
@@ -37,6 +37,37 @@ def test_solution_payload_codec():
     print("✓ Solution payload codec passed.")
 
 
+def test_card_splitting():
+    print("Testing card splitting for multi-exercise solutions...")
+    multi_ex = """**២៥. គណនាអាំងតេក្រាល $I = \\int_0^{\\frac{\\pi}{4}} \\sin^2 x dx$**
+
+$$I = \\frac{\\pi - 2}{8}$$
+
+---
+
+**២៦. គណនាលីមីត $\\lim_{x \\to +\\infty} x$**
+
+ចម្លើយគឺ $+\\infty$
+
+---
+
+**២៧. ដោះស្រាយសមីការ**
+
+$x = 0$
+"""
+    cards = split_solution_into_cards(multi_ex)
+    assert len(cards) == 3
+    assert "២៥. គណនាអាំងតេក្រាល" in cards[0]
+    assert "២៦. គណនាលីមីត" in cards[1]
+    assert "២៧. ដោះស្រាយសមីការ" in cards[2]
+
+    # Test single exercise
+    single_ex = "**២៨. រកម៉ូឌុល** $Z = 2\\sqrt{2}$"
+    single_cards = split_solution_into_cards(single_ex)
+    assert len(single_cards) == 1
+    print("✓ Card splitting test passed.")
+
+
 def test_solution_html_generator():
     print("Testing solution HTML generator...")
     sample_solution = "**២៨. រកម៉ូឌុល** $Z = \\sqrt{2} + i\\sqrt{6}$"
@@ -46,6 +77,7 @@ def test_solution_html_generator():
     assert "katex.min.js" in html
     assert "markedKatex" in html
     assert "#solution-card" in html
+    assert "font-size: 24px" in html
     print("✓ Solution HTML generator passed.")
 
 
@@ -109,23 +141,23 @@ def test_bot_send_photo_and_fallback():
     bot.send_photo = lambda chat_id, photo_bytes, caption=None, reply_to_message_id=None: captured_photos.append((chat_id, len(photo_bytes), caption)) or True
     bot.send_message = lambda chat_id, text, reply_to_message_id=None: captured_messages.append((chat_id, text)) or True
 
-    # 1. When renderer returns bytes
-    sample_answer = "ដំណោះស្រាយលំហាត់ $x = \\frac{1}{2}$"
-    # Mock render_solution_to_png
+    # 1. When renderer returns bytes with multi-exercise
+    sample_answer = """**២៥. គណនា $I = \\frac{\\pi-2}{8}$**\n---\n**២៦. គណនា $e^4$**"""
     import bot_core
     original_renderer = bot_core.render_solution_to_png
     bot_core.render_solution_to_png = lambda text: b"\x89PNG\r\n\x1a\nfake_png_data"
 
     bot._send_rendered_solution_or_text(chat_id=999, answer=sample_answer, message_id=10)
-    assert len(captured_photos) == 1
+    assert len(captured_photos) == 2
     assert captured_photos[0][0] == 999
-    assert "ដំណោះស្រាយលំហាត់" in captured_photos[0][2]
+    assert "(ភាគ 1/2)" in captured_photos[0][2]
+    assert "(ភាគ 2/2)" in captured_photos[1][2]
 
     # 2. When renderer returns None (fallback to text)
     bot_core.render_solution_to_png = lambda text: None
     bot._send_rendered_solution_or_text(chat_id=999, answer=sample_answer, message_id=11)
     assert len(captured_messages) == 1
-    assert "1/2" in captured_messages[0][1] or "(1) / (2)" in captured_messages[0][1]
+    assert "២៥." in captured_messages[0][1]
 
     bot_core.render_solution_to_png = original_renderer
     print("✓ Bot send_photo and fallback test passed.")
@@ -159,7 +191,6 @@ def test_api_handler_solution_route():
         def end_headers(self):
             pass
 
-    # Test /solution?c=<payload>
     test_payload = encode_solution_payload("## សួស្តី $1+1=2$")
     h = DummyHandler(f"/solution?c={test_payload}")
     h.do_GET()
@@ -169,7 +200,6 @@ def test_api_handler_solution_route():
     assert "<!DOCTYPE html>" in html_output
     assert "Kantumruy Pro" in html_output
 
-    # Test health check GET /
     h_health = DummyHandler("/")
     h_health.do_GET()
     assert h_health.response_code == 200
@@ -196,6 +226,7 @@ if __name__ == "__main__":
     print("========================================")
     test_gemini_solver_init()
     test_solution_payload_codec()
+    test_card_splitting()
     test_solution_html_generator()
     test_message_chunking()
     test_command_handling_mock()

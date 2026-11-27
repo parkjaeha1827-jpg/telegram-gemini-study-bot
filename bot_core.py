@@ -2,13 +2,14 @@
 Telegram Bot Core Handler
 Handles routing, commands, image processing, and responses for Telegram updates.
 Renders Khmer academic solutions to crisp PNG images with KaTeX math and sends via sendPhoto.
+Multi-exercise answers are split into individual cards so each exercise fills the screen at full width.
 """
 
 import os
 import requests
 from typing import Dict, Any, List, Optional
 from gemini_solver import GeminiSolver, format_math_telegram
-from renderer import render_solution_to_png
+from renderer import render_solution_to_png, split_solution_into_cards
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -149,7 +150,6 @@ class TelegramBot:
                         chunk_text += "\n```"
                     chunks.append(chunk_text)
 
-                    # Start new chunk continuing code block if needed
                     if in_code_block:
                         current = ["```", line]
                         current_len = 4 + line_len
@@ -182,21 +182,31 @@ class TelegramBot:
         message_id: Optional[int] = None
     ) -> None:
         """
-        Attempts to render the solution into a high-DPI KaTeX image and send via sendPhoto.
+        Attempts to render the solution into high-DPI KaTeX images (1 card per exercise)
+        and sends via sendPhoto so each exercise fills the chat screen at full width.
         Falls back to formatted Telegram text message if rendering fails or times out.
         """
         self.send_chat_action(chat_id, "upload_photo")
-        png_bytes = render_solution_to_png(answer)
+        cards = split_solution_into_cards(answer)
+        total_cards = len(cards)
 
-        if png_bytes:
-            caption = "📐 ដំណោះស្រាយលំហាត់ (Google Gemini AI & KaTeX)"
-            sent = self.send_photo(chat_id, png_bytes, caption=caption, reply_to_message_id=message_id)
-            if sent:
-                return
+        sent_photos = 0
+        for idx, card in enumerate(cards):
+            png_bytes = render_solution_to_png(card)
+            if png_bytes:
+                if total_cards > 1:
+                    caption = f"📐 ដំណោះស្រាយលំហាត់ (ភាគ {idx+1}/{total_cards})"
+                else:
+                    caption = "📐 ដំណោះស្រាយលំហាត់ (Google Gemini AI & KaTeX)"
 
-        # Fallback to clean Unicode math text message
-        fallback_text = format_math_telegram(answer)
-        self.send_message(chat_id, fallback_text, reply_to_message_id=message_id)
+                reply_id = message_id if idx == 0 else None
+                if self.send_photo(chat_id, png_bytes, caption=caption, reply_to_message_id=reply_id):
+                    sent_photos += 1
+
+        # If photo rendering failed completely, fallback to text
+        if sent_photos == 0:
+            fallback_text = format_math_telegram(answer)
+            self.send_message(chat_id, fallback_text, reply_to_message_id=message_id)
 
     def handle_update(self, update: Dict[str, Any]) -> None:
         """Processes an incoming Telegram Update dictionary."""
@@ -226,7 +236,6 @@ class TelegramBot:
             best_photo = photo[-1]
             file_id = best_photo.get("file_id")
 
-            # Temporary notification
             self.send_message(
                 chat_id,
                 "🔍 *កំពុងពិនិត្យរូបភាព និងគិតដោះស្រាយយ៉ាងម៉ត់ចត់...*\n_សូមរង់ចាំបន្តិច ប្រព័ន្ធ Gemini Flash High Reasoning កំពុងវិភាគ និង Render រូបមន្ត KaTeX... ⏳_",
@@ -246,7 +255,8 @@ class TelegramBot:
                 "សូមដោះស្រាយលំហាត់ក្នុងរូបភាពនេះឱ្យបានចប់សព្វគ្រប់ ១០០% គ្រប់លំហាត់ទាំងអស់ (មានក្បាលលំហាត់ «**[លេខរៀង]. [ប្រធាន]**», "
                 "ដំណោះស្រាយខ្លី ខ្លឹម សម្រួលកត្តារួមឱ្យងាយយល់ និងចម្លើយចុងក្រោយពេញលេញ ហាមដាច់ខាតកុំឱ្យដាច់ក្បាលដាច់កន្ទុយ)។ "
                 "រូបមន្ត និងសមីការគណិតវិទ្យាត្រូវសរសេរជា LaTeX ($...$ សម្រាប់ inline និង $$...$$ សម្រាប់ display equation "
-                "ប្រភាគប្រើ \\frac{}{} ជានិច្ច) និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «**ចម្លើយត្រឹមត្រូវគឺ គ. ...**»)។"
+                "ប្រភាគប្រើ \\frac{}{} ជានិច្ច) និងបញ្ចប់ដោយចម្លើយត្រឹមត្រូវ (ឧ. «**ចម្លើយត្រឹមត្រូវគឺ គ. ...**»)។ "
+                "បំបែកលំហាត់នីមួយៗដោយបន្ទាត់ផ្តេក --- ។"
             )
 
             success, answer = self.solver.solve(
@@ -283,7 +293,7 @@ class TelegramBot:
                 "📚 *សមត្ថភាពដោះស្រាយលំហាត់៖*\n"
                 "• 📸 *ផ្ញើរូបភាពលំហាត់* (ថតរូបពីសៀវភៅ ឬក្រដាសប្រឡង)\n"
                 "• ✍️ *សរសេរសំណួរ ឬសមីការ* ផ្ទាល់ចូលក្នុងប្រអប់សារ\n"
-                "• 🎨 *Render ចម្លើយជារូបភាព HD (KaTeX):* រូបមន្តគណិតវិទ្យាមានភាគយក របារប្រភាគ និងភាគបែងត្រឹមត្រូវស្អាតបាត ១០០%\n"
+                "• 🎨 *Render ចម្លើយជារូបភាព HD (KaTeX):* រូបមន្តគណិតវិទ្យាធំច្បាស់ពេញទំព័រ មានភាគយក របារប្រភាគ និងភាគបែងត្រឹមត្រូវស្អាតបាត ១០០%\n"
                 "• 🔬 ដោះស្រាយគ្រប់មុខវិជ្ជា៖ គណិត, រូប, គីមី, ជីវៈ, អក្សរសាស្ត្រខ្មែរ, អង់គ្លេស, ប្រវត្តិ, ភូមិ...\n"
                 "• 💡 បង្ហាញរូបមន្ត គន្លឹះ និងជំហានដោះស្រាយច្បាស់ៗមួយជំហានម្តងៗ\n\n"
                 "🚀 *របៀបប្រើ៖* គ្រាន់តែថតរូបលំហាត់ ឬវាយអត្ថបទសំណួរផ្ញើមកទីនេះភ្លាមៗ!\n\n"
@@ -301,7 +311,7 @@ class TelegramBot:
                 "• វាយប្រធានលំហាត់ ឬសំណួរចូលដោយផ្ទាល់\n"
                 "• អាចសួរបញ្ជាក់ចំណុចមិនយល់បន្ថែមបាន\n\n"
                 "3️⃣ *ទម្រង់រូបភាព Rendered HD:*\n"
-                "• Bot នឹង Render ចម្លើយដែលមានអក្សរខ្មែរ និងរូបមន្ត LaTeX ជារូបភាពកាតពណ៌សស្អាតផ្ញើតាម sendPhoto!\n\n"
+                "• Bot នឹង Render ចម្លើយដែលមានអក្សរខ្មែរ និងរូបមន្ត LaTeX ជារូបភាពកាតពណ៌សធំច្បាស់ពេញទំព័រផ្ញើតាម sendPhoto!\n\n"
                 "💡 *ចំណាំ:* Bot ត្រូវបានរចនាឡើងដើម្បីពន្យល់ឲ្យយល់ មិនមែនគ្រាន់តែបង្ហាញចម្លើយរួចស្រេចនោះទេ!"
             )
             self.send_message(chat_id, help_msg, reply_to_message_id=message_id)

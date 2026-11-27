@@ -1,14 +1,15 @@
 """
 HTML/KaTeX to PNG Image Renderer
-Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp PNG images.
+Renders rich Khmer academic solutions with KaTeX LaTeX math into crisp, large, full-width PNG images.
 """
 
 import os
+import re
 import zlib
 import base64
 import urllib.parse
 import requests
-from typing import Optional
+from typing import Optional, List
 
 VERCEL_HOST = os.environ.get("VERCEL_HOST", "https://telegram-gemini-study-bot-w6jg.vercel.app")
 
@@ -28,8 +29,56 @@ def decode_solution_payload(encoded_str: str) -> str:
         return ""
 
 
+def split_solution_into_cards(markdown_text: str, max_chars_per_card: int = 1200) -> List[str]:
+    """
+    Splits multi-exercise solutions into individual exercise cards.
+    Guarantees each card has optimal aspect ratio (1:1 to 4:5) so Telegram
+    displays each image at FULL WIDTH with large, clear, readable text.
+    """
+    text = markdown_text.strip()
+    if not text:
+        return []
+
+    # 1. First split by markdown horizontal rules: ---, ***, ___
+    raw_sections = [s.strip() for s in re.split(r'\n\s*[-*_]{3,}\s*\n', text) if s.strip()]
+
+    # 2. If no horizontal rules, check for bold numbered exercise patterns:
+    # e.g. **២៥. or **25. or **លំហាត់ទី ២៥ or ## លំហាត់
+    if len(raw_sections) <= 1:
+        pattern = r'(?=\n\*\*(?:[០-៩\d]+\s*[\.\:\)]|លំហាត់[ទី\s]))'
+        parts = [p.strip() for p in re.split(pattern, text) if p.strip()]
+        if len(parts) > 1:
+            raw_sections = parts
+
+    # 3. Check if any section is still too long (> max_chars_per_card)
+    final_cards = []
+    for section in raw_sections:
+        if len(section) <= max_chars_per_card:
+            final_cards.append(section)
+        else:
+            paragraphs = section.split("\n\n")
+            current = []
+            current_len = 0
+            for p in paragraphs:
+                p_len = len(p) + 2
+                if current_len + p_len > max_chars_per_card and current:
+                    final_cards.append("\n\n".join(current))
+                    current = [p]
+                    current_len = p_len
+                else:
+                    current.append(p)
+                    current_len += p_len
+            if current:
+                final_cards.append("\n\n".join(current))
+
+    return final_cards if final_cards else [text]
+
+
 def get_solution_html(markdown_text: str) -> str:
-    """Generates the full HTML document with Kantumruy Pro font, KaTeX, and Marked."""
+    """
+    Generates high-contrast HTML document with large Kantumruy Pro font,
+    crisp KaTeX math, and full-width card layout specifically tailored for mobile screens.
+    """
     encoded_b64 = base64.b64encode(markdown_text.encode("utf-8")).decode("ascii")
 
     return f"""<!DOCTYPE html>
@@ -40,7 +89,7 @@ def get_solution_html(markdown_text: str) -> str:
   <title>ដំណោះស្រាយលំហាត់</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
@@ -55,87 +104,93 @@ def get_solution_html(markdown_text: str) -> str:
       display: flex;
       justify-content: center;
       align-items: flex-start;
-      color: #0f172a;
+      color: #090d16;
       -webkit-font-smoothing: antialiased;
     }}
     #solution-card {{
       background: #ffffff;
-      width: 720px;
-      padding: 32px 36px;
-      border-radius: 16px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-      border: 1px solid #e2e8f0;
+      width: 680px;
+      padding: 36px 40px;
+      border-radius: 20px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+      border: 1.5px solid #e2e8f0;
     }}
     .badge {{
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       background: #f0fdf4;
-      color: #166534;
-      font-size: 13.5px;
-      font-weight: 600;
-      padding: 5px 14px;
+      color: #15803d;
+      font-size: 19px;
+      font-weight: 700;
+      padding: 7px 18px;
       border-radius: 9999px;
-      margin-bottom: 20px;
-      border: 1px solid #bbf7d0;
+      margin-bottom: 22px;
+      border: 1.5px solid #86efac;
     }}
     #content-body {{
-      font-size: 16.5px;
-      line-height: 1.8;
-      color: #1e293b;
+      font-size: 24px;
+      line-height: 1.85;
+      color: #0f172a;
+      font-weight: 500;
     }}
     #content-body h1, #content-body h2, #content-body h3 {{
-      color: #0f172a;
-      margin: 16px 0 10px 0;
-      font-weight: 700;
+      color: #020617;
+      margin: 18px 0 12px 0;
+      font-size: 27px;
+      font-weight: 800;
     }}
     #content-body p {{
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }}
     #content-body strong {{
-      color: #0f172a;
-      font-weight: 700;
+      color: #020617;
+      font-size: 25px;
+      font-weight: 800;
     }}
     #content-body hr {{
       border: none;
-      border-top: 1px dashed #cbd5e1;
-      margin: 20px 0;
+      border-top: 2px dashed #cbd5e1;
+      margin: 22px 0;
     }}
     #content-body ul, #content-body ol {{
-      margin: 8px 0 12px 24px;
+      margin: 10px 0 14px 28px;
     }}
     #content-body li {{
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }}
     .katex {{
-      font-size: 1.15em !important;
+      font-size: 1.35em !important;
     }}
     .katex-display {{
-      margin: 12px 0 !important;
-      padding: 4px 0;
+      margin: 18px 0 !important;
+      padding: 8px 0;
+      font-size: 1.3em !important;
       overflow-x: auto;
       overflow-y: hidden;
     }}
     pre, code {{
       font-family: 'Kantumruy Pro', monospace;
       background: #f8fafc;
-      border-radius: 8px;
+      border-radius: 10px;
     }}
     pre {{
-      padding: 12px 16px;
-      margin: 10px 0;
-      border: 1px solid #e2e8f0;
+      padding: 14px 18px;
+      margin: 14px 0;
+      border: 1.5px solid #cbd5e1;
+      font-size: 21px;
       overflow-x: auto;
     }}
     .footer-watermark {{
-      margin-top: 24px;
-      padding-top: 12px;
-      border-top: 1px solid #f1f5f9;
+      margin-top: 28px;
+      padding-top: 14px;
+      border-top: 1.5px solid #f1f5f9;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 12px;
-      color: #94a3b8;
+      font-size: 15px;
+      font-weight: 600;
+      color: #64748b;
     }}
   </style>
 </head>
@@ -191,7 +246,7 @@ def get_solution_html(markdown_text: str) -> str:
 
 def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[bytes]:
     """
-    Renders solution markdown (Khmer + KaTeX LaTeX) into a high-DPI PNG image.
+    Renders solution markdown (Khmer + KaTeX LaTeX) into a high-DPI, full-width PNG image.
     Uses headless Chromium via Microlink API targeting the Vercel solution renderer endpoint.
     """
     try:
@@ -203,7 +258,7 @@ def render_solution_to_png(markdown_text: str, timeout: int = 25) -> Optional[by
             "screenshot": "true",
             "embed": "screenshot.url",
             "element": "#solution-card",
-            "viewport.width": "800",
+            "viewport.width": "760",
             "viewport.deviceScaleFactor": "2",
             "waitForTimeout": "1000"
         }
