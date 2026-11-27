@@ -36,6 +36,7 @@ def test_gemini_solver_init():
     assert "លួងលោម" in SYSTEM_INSTRUCTION
     assert "ប្ដូរភាសាស្វ័យប្រវត្តិ" in SYSTEM_INSTRUCTION
     assert "ឆ្លើយតបជាសំឡេង" in SYSTEM_INSTRUCTION
+    assert "ច្បាប់ហាមដាច់ខាតភាសាថៃ" in SYSTEM_INSTRUCTION
     print("✓ GeminiSolver initialization & emotional personality rules passed.")
 
 
@@ -438,7 +439,7 @@ def test_video_downloader_detection_and_handling():
             return True       # Buffer upload succeeds
 
         bot.send_video = mock_send_video
-        bot_core.fetch_video_buffer = lambda url, max_bytes: (b"fake_mp4_bytes_in_ram", 15000000)
+        bot_core.fetch_video_buffer = lambda *args, **kwargs: (b"fake_mp4_bytes_in_ram", 15000000)
 
         bot.handle_update({
             "message": {
@@ -454,7 +455,7 @@ def test_video_downloader_detection_and_handling():
 
         # Step 1 fails, Step 2 returns (None, 65000000) because size > 50MB
         bot.send_video = lambda chat_id, video, **kwargs: False
-        bot_core.fetch_video_buffer = lambda url, max_bytes: (None, 65 * 1024 * 1024)
+        bot_core.fetch_video_buffer = lambda *args, **kwargs: (None, 65 * 1024 * 1024)
 
         bot.handle_update({
             "message": {
@@ -481,6 +482,16 @@ def test_video_downloader_detection_and_handling():
     print("✓ Video downloader detection, extraction routing, and 3-step fallback test passed.")
 
 
+def test_clean_unwanted_thai():
+    print("Testing clean_unwanted_thai for zero Thai text in Telegram...")
+    from video_service import clean_unwanted_thai
+    assert clean_unwanted_thai("សួស្តីបង ค่า ធ្វើអីហ្នឹង ครับ") == "សួស្តីបង ធ្វើអីហ្នឹង"
+    assert clean_unwanted_thai("អុីវា ស្រឡាញ់រាប់ឆ្មាំได้ត្រឹមសង្សារ ! Eva") == "អុីវា ស្រឡាញ់រាប់ឆ្មាំត្រឹមសង្សារ ! Eva"
+    assert clean_unwanted_thai("លំហាត់គណិតវិទ្យាទី ១") == "លំហាត់គណិតវិទ្យាទី ១"
+    assert clean_unwanted_thai("Hello World 123") == "Hello World 123"
+    print("✓ clean_unwanted_thai passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -497,6 +508,7 @@ if __name__ == "__main__":
     test_math_formatting()
     test_voice_service_and_bot_voice_handling()
     test_video_downloader_detection_and_handling()
+    test_clean_unwanted_thai()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

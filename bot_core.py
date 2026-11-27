@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional, Union
 from gemini_solver import GeminiSolver, format_math_telegram
 from renderer import render_solution_to_png, split_solution_into_cards
 from voice_service import text_to_speech
-from video_service import detect_video_url, extract_video_info, fetch_video_buffer
+from video_service import detect_video_url, extract_video_info, fetch_video_buffer, clean_unwanted_thai
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -48,7 +48,9 @@ class TelegramBot:
         Sends message to Telegram chat.
         Automatically splits messages longer than 4000 chars.
         Tries specified parse_mode first; if entity parsing fails, falls back to plain text.
+        Guarantees no unwanted Thai language mixes with Khmer.
         """
+        text = clean_unwanted_thai(text)
         chunks = self._chunk_message(text, max_chars=3900)
         total_chunks = len(chunks)
 
@@ -373,11 +375,11 @@ class TelegramBot:
         }
         p_name = platform_names.get(platform_code.lower(), platform_code.capitalize())
         raw_title = info.get("title") or f"វីដេអូ {p_name}"
-        clean_title = re.sub(r'[\r\n\t]+', ' ', raw_title).strip()
+        clean_title = clean_unwanted_thai(re.sub(r'[\r\n\t]+', ' ', raw_title)).strip()
         if len(clean_title) > 85:
             clean_title = clean_title[:82] + "..."
         safe_title = html.escape(clean_title)
-        safe_author = html.escape(info.get("author") or "N/A")
+        safe_author = html.escape(clean_unwanted_thai(info.get("author")) or "N/A")
 
         caption = (
             f"🎬 <b>{safe_title}</b>\n"
@@ -394,7 +396,7 @@ class TelegramBot:
 
         # Step 2: In-Memory Buffer Fallback (< 48MB)
         self.send_chat_action(chat_id, "upload_video")
-        video_bytes, total_size = fetch_video_buffer(direct_url, max_bytes=48 * 1024 * 1024)
+        video_bytes, total_size = fetch_video_buffer(direct_url, max_bytes=48 * 1024 * 1024, original_url=video_url)
         if video_bytes:
             if self.send_video(chat_id, video_bytes, caption=caption, reply_to_message_id=message_id, parse_mode="HTML"):
                 return

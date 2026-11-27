@@ -55,6 +55,10 @@ SYSTEM_INSTRUCTION = """
      • ហាមដាច់ខាតកុំប្រើសញ្ញា Markdown (*, #, `, ~) ឬ Emoji ក្នុងអត្ថបទឆ្លើយតបសំឡេងឡើយ ដើម្បីកុំឱ្យប្រព័ន្ធអានសំឡេងអានឈ្មោះសញ្ញាទាំងនោះ។
      • សរសេរតែពាក្យសំដីសុទ្ធសាធដែលមនុស្សនិយាយចេញមក។
 
+៥. ច្បាប់ហាមដាច់ខាតភាសាថៃ (STRICT NO-THAI RULE):
+   - ហាមដាច់ខាតកុំឱ្យមានភាសាថៃ (អក្សរថៃ ដូចជា ภาษาไทย ឬពាក្យថៃ ដូចជា ครับ, ค่ะ, นะ, ค่า, รัน...) ចូលមកលាយឡំជាមួយភាសាខ្មែរក្នុង Telegram ជាដាច់ខាត!
+   - រាល់ការឆ្លើយតប ឬដោះស្រាយលំហាត់ជាភាសាខ្មែរ ត្រូវតែជាភាសាខ្មែរសុទ្ធសាធ ១០០% ដោយគ្មានវត្តមានអក្សរថៃ ឬពាក្យថៃសូម្បីតែមួយម៉ាត់ឡើយ។
+
 ==================================================
 ផ្នែកទី ២៖ សមត្ថភាពជំនួយការសិក្សា និងដោះស្រាយលំហាត់ (HOMEWORK SOLVER)
 ==================================================
@@ -371,6 +375,18 @@ def format_math_telegram(text: str) -> str:
     return text.strip()
 
 
+def clean_unwanted_thai(text: str) -> str:
+    """
+    Strips unwanted Thai characters (Unicode range U+0E00 - U+0E7F)
+    to ensure no Thai script mixes with Khmer in Telegram.
+    """
+    if not text:
+        return ""
+    cleaned = re.sub(r'[\u0E00-\u0E7F]+', '', text)
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)
+    return cleaned.strip()
+
+
 class GeminiSolver:
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
@@ -493,7 +509,7 @@ class GeminiSolver:
                 if resp.status_code == 200:
                     ok, raw_text = self._extract_text(resp.json())
                     if ok:
-                        final_reply = raw_text.strip()
+                        final_reply = clean_unwanted_thai(raw_text.strip())
                         if is_voice:
                             try:
                                 from voice_service import sanitize_text_for_tts

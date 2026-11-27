@@ -31,6 +31,19 @@ DEFAULT_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+
+def clean_unwanted_thai(text: str) -> str:
+    """
+    Strips unwanted Thai characters (Unicode range U+0E00 - U+0E7F)
+    to ensure no Thai script mixes with Khmer in Telegram.
+    """
+    if not text:
+        return ""
+    # Strip any characters from the Thai unicode block
+    cleaned = re.sub(r'[\u0E00-\u0E7F]+', '', text)
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)
+    return cleaned.strip()
+
 # Regex patterns for supported platforms
 URL_PATTERNS = {
     "tiktok": re.compile(
@@ -347,51 +360,79 @@ def extract_facebook_video(url: str) -> Optional[Dict[str, Any]]:
 def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
     """
     Extracts direct MP4 video stream from YouTube video or Shorts
-    using public Invidious instances without any local binaries.
+    using pytubefix (pure Python) with Invidious/Cobalt fallbacks.
     """
-    # Extract video ID
+    # 1. Primary: pytubefix (pure Python with Android client)
+    try:
+        from pytubefix import YouTube
+        yt = YouTube(url, client='ANDROID')
+        raw_title = yt.title or "YouTube Video"
+        raw_author = yt.author or "YouTube Creator"
+        title = clean_unwanted_thai(raw_title) or "YouTube Video"
+        author = clean_unwanted_thai(raw_author) or "YouTube Creator"
+
+        # Prioritize progressive mp4 (video + audio in single stream)
+        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        if not stream:
+            stream = yt.streams.get_highest_resolution()
+
+        if stream and stream.url:
+            quality = stream.resolution or "HD"
+            filesize = getattr(stream, 'filesize', None)
+            return {
+                "success": True,
+                "direct_url": stream.url,
+                "title": title,
+                "author": author,
+                "platform": "YouTube",
+                "platform_code": "youtube",
+                "quality": f"{quality} (No Watermark)",
+                "size": filesize,
+                "original_url": url
+            }
+    except Exception as e:
+        print(f"[video_service] pytubefix exception: {e}")
+
+    # 2. Fallback: Extract video ID & query Invidious instances
     video_id = None
     v_match = re.search(r'(?:v=|shorts/|youtu\.be/|embed/)([a-zA-Z0-9_-]{11})', url)
     if v_match:
         video_id = v_match.group(1)
 
-    if not video_id:
-        return None
+    if video_id:
+        invidious_instances = [
+            "https://inv.nadeko.net",
+            "https://yewtu.be",
+            "https://invidious.nerdvpn.de",
+            "https://invidious.private.coffee",
+        ]
 
-    # Known healthy Invidious API instances
-    invidious_instances = [
-        "https://inv.nadeko.net",
-        "https://yewtu.be",
-        "https://invidious.nerdvpn.de",
-        "https://invidious.private.coffee",
-    ]
-
-    for inst in invidious_instances:
-        try:
-            api_url = f"{inst}/api/v1/videos/{video_id}"
-            resp = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=(4.0, 10.0))
-            if resp.status_code == 200:
-                data = resp.json()
-                title = data.get("title") or "YouTube Video"
-                author = data.get("author") or "YouTube Creator"
-                format_streams = data.get("formatStreams", [])
-                # Select mp4 with highest resolution
-                mp4_streams = [s for s in format_streams if s.get("container") == "mp4" and s.get("url")]
-                if mp4_streams:
-                    best_stream = mp4_streams[0]
-                    stream_url = best_stream.get("url")
-                    quality = best_stream.get("qualityLabel") or "HD"
-                    return {
-                        "success": True,
-                        "direct_url": stream_url,
-                        "title": title,
-                        "author": author,
-                        "platform": "YouTube",
-                        "platform_code": "youtube",
-                        "quality": f"{quality} (No Watermark)"
-                    }
-        except Exception:
-            continue
+        for inst in invidious_instances:
+            try:
+                api_url = f"{inst}/api/v1/videos/{video_id}"
+                resp = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=(4.0, 10.0))
+                if resp.status_code == 200:
+                    data = resp.json()
+                    title = clean_unwanted_thai(data.get("title") or "YouTube Video")
+                    author = clean_unwanted_thai(data.get("author") or "YouTube Creator")
+                    format_streams = data.get("formatStreams", [])
+                    mp4_streams = [s for s in format_streams if s.get("container") == "mp4" and s.get("url")]
+                    if mp4_streams:
+                        best_stream = mp4_streams[0]
+                        stream_url = best_stream.get("url")
+                        quality = best_stream.get("qualityLabel") or "HD"
+                        return {
+                            "success": True,
+                            "direct_url": stream_url,
+                            "title": title,
+                            "author": author,
+                            "platform": "YouTube",
+                            "platform_code": "youtube",
+                            "quality": f"{quality} (No Watermark)",
+                            "original_url": url
+                        }
+            except Exception:
+                continue
 
     return None
 
@@ -424,13 +465,42 @@ def extract_video_info(url: str, platform_code: Optional[str] = None) -> Optiona
     return None
 
 
-def fetch_video_buffer(video_url: str, max_bytes: int = 48 * 1024 * 1024) -> Tuple[Optional[bytes], Optional[int]]:
+def fetch_video_buffer(
+    video_url: str,
+    max_bytes: int = 48 * 1024 * 1024,
+    original_url: Optional[str] = None
+) -> Tuple[Optional[bytes], Optional[int]]:
     """
     Downloads video stream directly into memory (zero disk usage).
     Returns (bytes_data, total_size).
     If the file is larger than max_bytes or 50MB, returns (None, total_size)
     so the bot can cleanly fallback to Inline Keyboard.
     """
+    # Check if target is YouTube - use pytubefix streaming buffer for 100% reliability
+    yt_url = original_url if (original_url and ("youtube.com" in original_url or "youtu.be" in original_url)) else None
+    if not yt_url and ("youtube.com" in video_url or "youtu.be" in video_url):
+        yt_url = video_url
+
+    if yt_url:
+        try:
+            from pytubefix import YouTube
+            yt = YouTube(yt_url, client='ANDROID')
+            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            if not stream:
+                stream = yt.streams.get_highest_resolution()
+            if stream:
+                filesize = getattr(stream, 'filesize', 0)
+                if filesize and filesize > 50 * 1024 * 1024:
+                    return None, filesize
+                buffer = io.BytesIO()
+                stream.stream_to_buffer(buffer)
+                val = buffer.getvalue()
+                if len(val) > max_bytes:
+                    return None, len(val)
+                return val, len(val)
+        except Exception as e:
+            print(f"[video_service] pytubefix stream_to_buffer error: {e}")
+
     try:
         # Check Content-Length first via HEAD or streaming GET
         resp = requests.get(
