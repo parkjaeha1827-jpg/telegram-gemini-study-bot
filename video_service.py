@@ -52,7 +52,7 @@ URL_PATTERNS = {
         re.IGNORECASE
     ),
     "facebook": re.compile(
-        r'https?://(?:www\.|web\.|m\.)?(?:facebook\.com/(?:reel|watch|share|[^/]+/videos)/[^\s<>"\'`]+|fb\.watch/[^\s<>"\'`]+)',
+        r'https?://(?:[a-zA-Z0-9-]+\.)?(?:facebook\.com/(?:reel|watch|share|stories|groups/[^/]+/permalink|[^/]+/videos|video\.php)[^\s<>"\'`]*|fb\.watch/[^\s<>"\'`]+|fb\.com/[^\s<>"\'`]+)',
         re.IGNORECASE
     ),
     "youtube": re.compile(
@@ -404,34 +404,49 @@ def extract_capcut_video(url: str) -> Optional[Dict[str, Any]]:
 def extract_facebook_video(url: str) -> Optional[Dict[str, Any]]:
     """
     Extracts direct HD/SD MP4 video stream from Facebook Reel or Video
-    via HTML scraper and parameter extraction.
+    via HTML scraper with entity unescaping and mobile fallback.
     """
-    try:
-        # Fetch page with desktop headers
-        resp = requests.get(url, headers=DEFAULT_HEADERS, allow_redirects=True, timeout=(5.0, 15.0))
-        if resp.status_code == 200:
-            page_text = resp.text
+    fb_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+        "Cache-Control": "max-age=0",
+        "Upgrade-Insecure-Requests": "1"
+    }
 
-            # Patterns Facebook uses for direct video streams
+    try:
+        session = requests.Session()
+        resp = session.get(url, headers=fb_headers, allow_redirects=True, timeout=(4.0, 10.0))
+        if resp.status_code == 200:
+            page_text = html.unescape(resp.text).replace('&quot;', '"').replace('&amp;', '&').replace(r'\/', '/')
+            
             patterns = [
                 r'"browser_native_hd_url"\s*:\s*"([^"]+)"',
                 r'"playable_url_quality_hd"\s*:\s*"([^"]+)"',
+                r'"hd_src_no_ratelimit"\s*:\s*"([^"]+)"',
+                r'hd_src\s*:\s*["\']([^"\']+)["\']',
                 r'"browser_native_sd_url"\s*:\s*"([^"]+)"',
                 r'"playable_url"\s*:\s*"([^"]+)"',
-                r'hd_src\s*:\s*["\']([^"\']+)["\']',
+                r'"sd_src_no_ratelimit"\s*:\s*"([^"]+)"',
                 r'sd_src\s*:\s*["\']([^"\']+)["\']',
+                r'https?://[^\s"\'<>]*(?:video\.[^\s"\'<>]*fbcdn\.net)[^\s"\'<>]*(?:\.mp4)[^\s"\'<>]*',
             ]
 
             for pat in patterns:
                 match = re.search(pat, page_text)
                 if match:
-                    raw_url = match.group(1)
-                    # Unescape unicode and slashes
-                    direct_url = raw_url.encode('utf-8').decode('unicode_escape').replace(r"\/", "/")
+                    raw_url = match.group(1) if match.groups() else match.group(0)
+                    direct_url = raw_url.encode('utf-8').decode('unicode_escape', errors='ignore').replace(r'\/', '/')
                     if direct_url.startswith("http"):
-                        # Extract title
                         title_match = re.search(r'<meta\s+(?:property|name)=["\']og:title["\']\s+content=["\']([^"\']+)["\']', page_text)
-                        title = html.unescape(title_match.group(1)) if title_match else "Facebook Video"
+                        raw_title = html.unescape(title_match.group(1)) if title_match else "Facebook Video"
+                        title = clean_unwanted_thai(raw_title) or "Facebook Video"
                         if len(title) > 90:
                             title = title[:87] + "..."
                         return {
@@ -441,7 +456,39 @@ def extract_facebook_video(url: str) -> Optional[Dict[str, Any]]:
                             "author": "Facebook Creator",
                             "platform": "Facebook",
                             "platform_code": "facebook",
-                            "quality": "HD" if "hd" in pat else "SD"
+                            "quality": "HD (No Watermark)" if ("hd" in pat.lower()) else "SD (No Watermark)",
+                            "original_url": url
+                        }
+
+        # Mobile fallback attempt
+        mobile_headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        mobile_url = re.sub(r'https?://(?:www\.|web\.)?facebook\.com', 'https://m.facebook.com', resp.url if 'resp' in locals() else url)
+        m_resp = requests.get(mobile_url, headers=mobile_headers, allow_redirects=True, timeout=(4.0, 8.0))
+        if m_resp.status_code == 200:
+            m_text = html.unescape(m_resp.text).replace('&quot;', '"').replace('&amp;', '&').replace(r'\/', '/')
+            for pat in [
+                r'"browser_native_hd_url"\s*:\s*"([^"]+)"',
+                r'"browser_native_sd_url"\s*:\s*"([^"]+)"',
+                r'https?://[^\s"\'<>]*(?:video\.[^\s"\'<>]*fbcdn\.net)[^\s"\'<>]*(?:\.mp4)[^\s"\'<>]*',
+            ]:
+                match = re.search(pat, m_text)
+                if match:
+                    raw_url = match.group(1) if match.groups() else match.group(0)
+                    direct_url = raw_url.encode('utf-8').decode('unicode_escape', errors='ignore').replace(r'\/', '/')
+                    if direct_url.startswith("http"):
+                        return {
+                            "success": True,
+                            "direct_url": direct_url,
+                            "title": "Facebook Video",
+                            "author": "Facebook Creator",
+                            "platform": "Facebook",
+                            "platform_code": "facebook",
+                            "quality": "HD (No Watermark)",
+                            "original_url": url
                         }
     except Exception as e:
         print(f"[video_service] Facebook scraper exception: {e}")
@@ -452,27 +499,107 @@ def extract_facebook_video(url: str) -> Optional[Dict[str, Any]]:
 def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
     """
     Extracts direct MP4 video stream from YouTube video or Shorts
-    using pytubefix (pure Python) with Invidious/Cobalt fallbacks.
+    using fast public Invidious instances with progressive or adaptive MP4 fallback,
+    and pytubefix fallback.
     """
-    # 1. Primary: pytubefix (pure Python with Android / MWEB client)
+    # Clean URL and extract video ID
+    video_id = None
+    v_match = re.search(r'(?:v=|shorts/|youtu\.be/|embed/)([a-zA-Z0-9_-]{11})', url)
+    if v_match:
+        video_id = v_match.group(1)
+
+    if not video_id:
+        return None
+
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    # 1. Primary: Fast Invidious API instances
+    invidious_instances = [
+        "https://yt.chocolatemoo53.com",
+        "https://inv.tux.pizza",
+        "https://inv.nadeko.net",
+        "https://yewtu.be",
+        "https://invidious.private.coffee",
+    ]
+
+    for inst in invidious_instances:
+        try:
+            api_url = f"{inst}/api/v1/videos/{video_id}"
+            resp = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=(2.5, 4.0))
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_title = data.get("title") or "YouTube Video"
+                raw_author = data.get("author") or "YouTube Creator"
+                title = clean_unwanted_thai(raw_title) or "YouTube Video"
+                author = clean_unwanted_thai(raw_author) or "YouTube Creator"
+
+                # Check 1a: formatStreams (progressive mp4 with audio + video)
+                format_streams = data.get("formatStreams", [])
+                mp4_streams = [s for s in format_streams if s.get("container") == "mp4" and s.get("url")]
+                if mp4_streams:
+                    best_stream = mp4_streams[0]
+                    stream_url = best_stream.get("url")
+                    quality = best_stream.get("qualityLabel") or best_stream.get("resolution") or "360p HD"
+                    return {
+                        "success": True,
+                        "direct_url": stream_url,
+                        "title": title,
+                        "author": author,
+                        "platform": "YouTube",
+                        "platform_code": "youtube",
+                        "quality": f"{quality} (No Watermark)",
+                        "original_url": canonical_url
+                    }
+
+                # Check 1b: adaptiveFormats (fallback to highest quality MP4 stream)
+                adaptive_formats = data.get("adaptiveFormats", [])
+                video_mp4 = [
+                    af for af in adaptive_formats
+                    if "video/mp4" in af.get("type", "") and af.get("url")
+                ]
+                if video_mp4:
+                    best_af = video_mp4[0]
+                    for af in video_mp4:
+                        res_str = str(af.get("resolution", ""))
+                        if "720" in res_str or "1080" in res_str:
+                            best_af = af
+                            break
+                        elif "480" in res_str or "360" in res_str:
+                            best_af = af
+
+                    stream_url = best_af.get("url")
+                    quality = best_af.get("resolution") or "HD"
+                    return {
+                        "success": True,
+                        "direct_url": stream_url,
+                        "title": title,
+                        "author": author,
+                        "platform": "YouTube",
+                        "platform_code": "youtube",
+                        "quality": f"{quality} (No Watermark)",
+                        "original_url": canonical_url
+                    }
+        except Exception as inv_err:
+            print(f"[video_service] Invidious ({inst}) exception: {inv_err}")
+            continue
+
+    # 2. Secondary fallback: pytubefix (for local/non-datacenter environments)
     try:
         from pytubefix import YouTube
-        for client_name in ['ANDROID', 'MWEB', 'WEB', 'IOS']:
+        for client_name in ['ANDROID_VR', 'ANDROID', 'MWEB']:
             try:
-                yt = YouTube(url, client=client_name)
+                yt = YouTube(canonical_url, client=client_name)
                 raw_title = yt.title or "YouTube Video"
                 raw_author = yt.author or "YouTube Creator"
                 title = clean_unwanted_thai(raw_title) or "YouTube Video"
                 author = clean_unwanted_thai(raw_author) or "YouTube Creator"
 
-                # Prioritize progressive mp4 (video + audio in single stream)
                 stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
                 if not stream:
                     stream = yt.streams.get_highest_resolution()
 
                 if stream and stream.url:
-                    quality = stream.resolution or "HD"
-                    filesize = getattr(stream, 'filesize', None)
+                    quality = getattr(stream, 'resolution', None) or "HD"
                     return {
                         "success": True,
                         "direct_url": stream.url,
@@ -481,55 +608,12 @@ def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
                         "platform": "YouTube",
                         "platform_code": "youtube",
                         "quality": f"{quality} (No Watermark)",
-                        "size": filesize,
-                        "original_url": url
+                        "original_url": canonical_url
                     }
             except Exception as client_err:
                 print(f"[video_service] pytubefix ({client_name}) exception: {client_err}")
     except Exception as e:
         print(f"[video_service] pytubefix import exception: {e}")
-
-    # 2. Fallback: Extract video ID & query Invidious instances
-    video_id = None
-    v_match = re.search(r'(?:v=|shorts/|youtu\.be/|embed/)([a-zA-Z0-9_-]{11})', url)
-    if v_match:
-        video_id = v_match.group(1)
-
-    if video_id:
-        invidious_instances = [
-            "https://yt.chocolatemoo53.com",
-            "https://inv.nadeko.net",
-            "https://yewtu.be",
-            "https://invidious.nerdvpn.de",
-            "https://invidious.private.coffee",
-        ]
-
-        for inst in invidious_instances:
-            try:
-                api_url = f"{inst}/api/v1/videos/{video_id}"
-                resp = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=(4.0, 10.0))
-                if resp.status_code == 200:
-                    data = resp.json()
-                    title = clean_unwanted_thai(data.get("title") or "YouTube Video")
-                    author = clean_unwanted_thai(data.get("author") or "YouTube Creator")
-                    format_streams = data.get("formatStreams", [])
-                    mp4_streams = [s for s in format_streams if s.get("container") == "mp4" and s.get("url")]
-                    if mp4_streams:
-                        best_stream = mp4_streams[0]
-                        stream_url = best_stream.get("url")
-                        quality = best_stream.get("qualityLabel") or "HD"
-                        return {
-                            "success": True,
-                            "direct_url": stream_url,
-                            "title": title,
-                            "author": author,
-                            "platform": "YouTube",
-                            "platform_code": "youtube",
-                            "quality": f"{quality} (No Watermark)",
-                            "original_url": url
-                        }
-            except Exception:
-                continue
 
     return None
 
@@ -573,42 +657,13 @@ def fetch_video_buffer(
     If the file is larger than max_bytes or 50MB, returns (None, total_size)
     so the bot can cleanly fallback to Inline Keyboard.
     """
-    # Check if target is YouTube - use pytubefix streaming buffer for 100% reliability
-    yt_url = original_url if (original_url and ("youtube.com" in original_url or "youtu.be" in original_url)) else None
-    if not yt_url and ("youtube.com" in video_url or "youtu.be" in video_url):
-        yt_url = video_url
-
-    if yt_url:
-        try:
-            from pytubefix import YouTube
-            for client_name in ['ANDROID', 'MWEB']:
-                try:
-                    yt = YouTube(yt_url, client=client_name)
-                    stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-                    if not stream:
-                        stream = yt.streams.get_highest_resolution()
-                    if stream:
-                        filesize = getattr(stream, 'filesize', 0)
-                        if filesize and filesize > 50 * 1024 * 1024:
-                            return None, filesize
-                        buffer = io.BytesIO()
-                        stream.stream_to_buffer(buffer)
-                        val = buffer.getvalue()
-                        if len(val) > max_bytes:
-                            return None, len(val)
-                        return val, len(val)
-                except Exception as client_err:
-                    print(f"[video_service] pytubefix buffer ({client_name}) error: {client_err}")
-        except Exception as e:
-            print(f"[video_service] pytubefix stream_to_buffer error: {e}")
-
     try:
-        # Check Content-Length first via HEAD or streaming GET
         resp = requests.get(
             video_url,
             headers=DEFAULT_HEADERS,
             stream=True,
-            timeout=(6.0, 30.0)
+            allow_redirects=True,
+            timeout=(5.0, 20.0)
         )
         if resp.status_code != 200:
             return None, None
@@ -628,7 +683,6 @@ def fetch_video_buffer(
                 buffer.write(chunk)
                 downloaded += len(chunk)
                 if downloaded > max_bytes:
-                    # Video exceeded memory buffer limit
                     return None, total_size or downloaded
 
         return buffer.getvalue(), downloaded
