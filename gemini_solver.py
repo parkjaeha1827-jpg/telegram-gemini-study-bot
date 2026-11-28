@@ -129,6 +129,12 @@ SYSTEM_INSTRUCTION = """
    - ពេលគេសុំឱ្យច្រៀង ត្រូវនិពន្ធទំនុកច្រៀងភ្លាមៗតាមប្រធានបទដែលគេចង់បាន (អាចជាចង្វាក់ កន្ទ្រឹម មនោសញ្ចេតនា សារ៉ាវ៉ាន់ ឬរ៉េប) ដោយដាក់សញ្ញាភ្លេង 🎶 🎵 អមទំនុកច្រៀង។
    - ពេលឆ្លើយតបជាសារសំឡេង (Voice Message) ត្រូវច្រៀង/សូត្រតាមចង្វាក់យ៉ាងពីរោះរណ្តំ។
 
+ក្រុមទី ៥៖ ការសរសេរ និងជួសជុលកូដ (Full-Stack App Builder & Live Preview)
+- ពេលអ្នកប្រើប្រាស់សុំបង្កើតគេហទំព័រ ហ្គេម កម្មវិធីគណនា Dashboard ឧបករណ៍ ឬផ្ញើកូដមកឱ្យជួយកែ៖
+  * ត្រូវសរសេរកូដពេញលេញ ១០០% ដែលអាចដំណើរការបានពិតប្រាកដ (ហាមកាត់កូដ ឬទុកចន្លោះ)។
+  * បន្ថែម Comment ពន្យល់ជាភាសាខ្មែរត្រឹមត្រូវនៅក្នុងកូដ។
+  * រៀបចំកូដរួមបញ្ចូលគ្នាជា Single-file HTML មួយច្បាប់ពេញលេញក្នុងប្លុក ```html (មាន CSS និង JS ខាងក្នុង) ដើម្បីឱ្យប្រព័ន្ធអាចបើក Live Preview ផ្ទាល់ក្នុង Telegram Mini App បានភ្លាមៗ។
+
 ==================================================
 មុខងារទី ២៖ ពេលសន្ទនាធម្មតា ឬជជែកលេង (REALISTIC HUMAN & SASSY PERSONA)
 ==================================================
@@ -504,10 +510,13 @@ def clean_unwanted_thai(text: str) -> str:
     """
     Strips unwanted Thai characters (Unicode range U+0E00 - U+0E7F)
     to ensure no Thai script mixes with Khmer in Telegram.
+    Preserves indentation inside fenced code blocks (```).
     """
     if not text:
         return ""
     cleaned = re.sub(r'[\u0E00-\u0E7F]+', '', text)
+    if "```" in cleaned:
+        return cleaned.strip()
     cleaned = re.sub(r'[ \t]+', ' ', cleaned)
     return cleaned.strip()
 
@@ -545,7 +554,8 @@ class GeminiSolver:
         image_bytes: Optional[bytes] = None,
         mime_type: str = "image/jpeg",
         chat_id: Optional[int] = None,
-        is_voice: bool = False
+        is_voice: bool = False,
+        is_code_request: bool = False
     ) -> Tuple[bool, str]:
         """
         Sends question/exercise/chat/voice to Gemini API with Google Search Grounding
@@ -614,13 +624,12 @@ class GeminiSolver:
                 ]
             },
             "generationConfig": {
-                "temperature": 1.0,
+                "temperature": 0.7 if is_code_request else 1.0,
                 "maxOutputTokens": 8192
-            },
-            "tools": [
-                {"googleSearch": {}}
-            ]
+            }
         }
+        if not is_code_request:
+            payload["tools"] = [{"googleSearch": {}}]
 
         headers = {
             "Content-Type": "application/json",

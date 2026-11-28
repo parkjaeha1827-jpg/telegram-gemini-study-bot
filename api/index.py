@@ -18,13 +18,57 @@ if parent_dir not in sys.path:
 
 from bot_core import TelegramBot
 from renderer import decode_solution_payload, get_solution_html
+from preview_service import PreviewStore, render_preview_not_found_html
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        """Health check endpoint and KaTeX solution card HTML renderer."""
+        """Health check endpoint, Live Mini App Preview route, and KaTeX solution card renderer."""
         parsed = urllib.parse.urlparse(self.path)
         query_params = urllib.parse.parse_qs(parsed.query)
+
+        # Handle Telegram Mini App Live Preview route: /api/preview/<id> or /preview/<id>
+        preview_id = None
+        if query_params.get("route") == ["preview"] and query_params.get("id"):
+            preview_id = query_params["id"][0]
+        else:
+            for candidate_path in (
+                parsed.path,
+                self.headers.get("x-forwarded-uri", ""),
+                self.headers.get("x-matched-path", ""),
+            ):
+                if not candidate_path:
+                    continue
+                clean_p = urllib.parse.urlparse(candidate_path).path
+                if clean_p.startswith("/api/preview/"):
+                    preview_id = clean_p[len("/api/preview/"):].strip("/").split("/")[0]
+                    break
+                if clean_p.startswith("/preview/"):
+                    preview_id = clean_p[len("/preview/"):].strip("/").split("/")[0]
+                    break
+
+        if preview_id:
+            fid_list = query_params.get("fid", [])
+            sig_list = query_params.get("sig", [])
+            fid = fid_list[0] if fid_list else None
+            sig = sig_list[0] if sig_list else None
+
+            store = PreviewStore()
+            html_content = store.get_preview(preview_id, file_id=fid, sig=sig)
+            if html_content:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "public, max-age=300")
+                self.end_headers()
+                self.wfile.write(html_content.encode("utf-8"))
+                return
+
+            not_found_html = render_preview_not_found_html(preview_id)
+            self.send_response(404)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(not_found_html.encode("utf-8"))
+            return
 
         # Handle KaTeX solution HTML render route
         is_solution = (

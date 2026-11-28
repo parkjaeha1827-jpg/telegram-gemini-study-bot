@@ -7,6 +7,7 @@ Multi-exercise answers are strictly split by exercise boundary (1 Exercise = 1 F
 
 import os
 import re
+import json
 import html
 import requests
 from typing import Dict, Any, List, Optional, Union
@@ -14,6 +15,17 @@ from gemini_solver import GeminiSolver, format_math_telegram
 from renderer import render_solution_to_png, split_solution_into_cards
 from voice_service import text_to_speech
 from video_service import detect_video_url, extract_video_info, fetch_video_buffer, clean_unwanted_thai
+from preview_service import (
+    PreviewStore,
+    SUPPORTED_CODE_EXTENSIONS,
+    is_code_or_app_request,
+    build_app_builder_prompt,
+    extract_code_blocks,
+    find_previewable_html,
+    inject_telegram_webapp_script,
+    extract_html_title,
+    package_code_export,
+)
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -24,6 +36,7 @@ class TelegramBot:
         self.base_url = f"{TELEGRAM_API_BASE}/bot{self.token}"
         self.file_url = f"{TELEGRAM_API_BASE}/file/bot{self.token}"
         self.solver = GeminiSolver()
+        self.preview_store = PreviewStore()
 
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         """Sends chat action indicator (typing, upload_photo) to let user know bot is working."""
@@ -213,6 +226,50 @@ class TelegramBot:
         except Exception as e:
             print(f"[send_video] Exception sending video: {e}")
             return False
+
+    def send_document(
+        self,
+        chat_id: int,
+        file_bytes: bytes,
+        filename: str,
+        mime_type: str = "text/plain",
+        caption: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None,
+        reply_markup: Optional[Dict[str, Any]] = None,
+        parse_mode: Optional[str] = "HTML"
+    ) -> Optional[str]:
+        """
+        Sends an in-memory file (HTML, PY, JS, ZIP, etc.) to Telegram chat via sendDocument.
+        Returns Telegram's file_id on success (or 'ok' fallback), or None on failure.
+        """
+        try:
+            data: Dict[str, Any] = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = clean_unwanted_thai(caption)[:1024]
+            if parse_mode:
+                data["parse_mode"] = parse_mode
+            if reply_to_message_id:
+                data["reply_to_message_id"] = reply_to_message_id
+            if reply_markup:
+                data["reply_markup"] = json.dumps(reply_markup)
+
+            files = {
+                "document": (filename, file_bytes, mime_type)
+            }
+            resp = requests.post(
+                f"{self.base_url}/sendDocument",
+                data=data,
+                files=files,
+                timeout=30
+            )
+            if resp.status_code == 200 and resp.json().get("ok"):
+                doc_obj = resp.json().get("result", {}).get("document", {})
+                return doc_obj.get("file_id") or "ok"
+            print(f"[send_document] Failed ({resp.status_code}): {resp.text}")
+            return None
+        except Exception as e:
+            print(f"[send_document] Exception sending document: {e}")
+            return None
 
     def get_file_bytes(self, file_id: str) -> Optional[bytes]:
         """Downloads photo file from Telegram servers."""
@@ -429,6 +486,94 @@ class TelegramBot:
             parse_mode="HTML"
         )
 
+    def _handle_code_response(
+        self,
+        chat_id: int,
+        message_id: int,
+        answer: str
+    ) -> None:
+        """
+        Processes Gemini's App Builder / Code Fix response:
+        1. Extracts single-file HTML and/or other code blocks.
+        2. Saves previewable HTML into PreviewStore (Vercel KV / Firestore / Signed Telegram Cloud).
+        3. Sends portable code file (.html, .py, .js, or .zip) via sendDocument.
+        4. Sends summary message with Telegram Mini App Live Preview Inline Keyboard button.
+        """
+        blocks, summary_text = extract_code_blocks(answer)
+        if not blocks:
+            self._send_rendered_solution_or_text(chat_id, answer, message_id)
+            return
+
+        app_id = self.preview_store.generate_id()
+        raw_html = find_previewable_html(blocks)
+        ready_html = inject_telegram_webapp_script(raw_html) if raw_html else None
+        app_title = extract_html_title(ready_html, fallback="កម្មវិធី Mini App") if ready_html else blocks[0]["filename"]
+
+        stored_remotely = False
+        if ready_html:
+            stored_remotely, _ = self.preview_store.save_preview(app_id, ready_html, title=app_title)
+
+        # Package portable code file in memory (.html, .py, .js, or .zip)
+        filename, file_bytes, mime_type = package_code_export(blocks, app_id, preview_html=ready_html)
+
+        self.send_chat_action(chat_id, "upload_document")
+        safe_fname = html.escape(filename)
+        safe_title = html.escape(clean_unwanted_thai(app_title) or app_id)
+        doc_caption = (
+            f"📦 <b>ឯកសារកូដដើម:</b> <code>{safe_fname}</code>\n"
+            f"💡 <i>ទាញយកឯកសារនេះដើម្បីបើកកែបន្តក្នុង VS Code, Antigravity ឬកម្មវិធីកូដផ្សេងៗបានភ្លាមៗ!</i>"
+        )
+        uploaded_file_id = self.send_document(
+            chat_id=chat_id,
+            file_bytes=file_bytes,
+            filename=filename,
+            mime_type=mime_type,
+            caption=doc_caption,
+            reply_to_message_id=message_id,
+            parse_mode="HTML"
+        )
+
+        # Prepare clean Khmer explanation message
+        clean_summary = clean_unwanted_thai(summary_text).strip()
+        if len(clean_summary) > 2500:
+            clean_summary = clean_summary[:2490].rsplit("\n", 1)[0] + "\n..."
+
+        if ready_html:
+            fid_for_url = uploaded_file_id if (uploaded_file_id and uploaded_file_id != "ok") else None
+            preview_url = self.preview_store.build_preview_url(
+                app_id=app_id,
+                file_id=fid_for_url,
+                stored_remotely=stored_remotely,
+                bot_token=self.token
+            )
+            header = (
+                f"🛠️ <b>{safe_title}</b>\n"
+                f"🆔 <b>App ID:</b> <code>{app_id}</code>\n\n"
+            )
+            body = html.escape(clean_summary) if clean_summary else "កូដកម្មវិធីត្រូវបានបង្កើតរួចរាល់ ១០០% ហើយមាន Comment ពន្យល់ជាភាសាខ្មែរ។"
+            footer = "\n\n👇 <i>ចុចប៊ូតុងខាងក្រោមដើម្បីបើកសាកល្បងកម្មវិធីផ្ទាល់ក្នុង Telegram Mini App៖</i>"
+            reply_markup = {
+                "inline_keyboard": [
+                    [{"text": "🚀 Preview កម្មវិធីផ្ទាល់", "web_app": {"url": preview_url}}]
+                ]
+            }
+            self.send_message(
+                chat_id,
+                header + body + footer,
+                reply_to_message_id=message_id,
+                reply_markup=reply_markup,
+                parse_mode="HTML"
+            )
+        else:
+            header = f"💻 <b>កូដត្រូវបានរៀបចំរួចរាល់!</b> (<code>{safe_fname}</code>)\n\n"
+            body = html.escape(clean_summary) if clean_summary else "សូមទាញយកឯកសារកូដខាងលើដើម្បីប្រើប្រាស់ ឬកែបន្ត។"
+            self.send_message(
+                chat_id,
+                header + body,
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+
     def handle_update(self, update: Dict[str, Any]) -> None:
         """Processes an incoming Telegram Update dictionary."""
         message = update.get("message") or update.get("edited_message")
@@ -442,6 +587,7 @@ class TelegramBot:
 
         text = (message.get("text") or "").strip()
         photo = message.get("photo")
+        document = message.get("document")
         voice = message.get("voice")
         audio = message.get("audio")
         caption = (message.get("caption") or "").strip()
@@ -458,6 +604,41 @@ class TelegramBot:
             matched_url, platform_code = video_detection
             self._handle_video_download(chat_id, message_id, matched_url, platform_code)
             return
+
+        # Handle Uploaded Code Document (Fix/Edit/Preview Code Files)
+        if document:
+            doc_name = (document.get("file_name") or "").strip()
+            doc_ext = os.path.splitext(doc_name)[1].lower()
+            doc_size = document.get("file_size") or 0
+            if doc_ext in SUPPORTED_CODE_EXTENSIONS and doc_size <= 512 * 1024:
+                self.send_chat_action(chat_id, "typing")
+                raw_doc = self.get_file_bytes(document.get("file_id", ""))
+                if not raw_doc:
+                    self.send_message(
+                        chat_id,
+                        "❌ មិនអាចទាញយកឯកសារកូដបានទេ។ សូមព្យាយាមផ្ញើម្តងទៀត។",
+                        reply_to_message_id=message_id
+                    )
+                    return
+
+                code_text = raw_doc.decode("utf-8", errors="replace")
+                user_req = caption or f"សូមពិនិត្យ កែកំហុស និងកែលម្អកូដក្នុងឯកសារ {doc_name} ឱ្យដំណើរការបានល្អ ១០០%។"
+                enhanced_prompt = build_app_builder_prompt(
+                    user_text=user_req,
+                    uploaded_filename=doc_name,
+                    uploaded_code=code_text
+                )
+                success, answer = self.solver.solve(
+                    prompt=enhanced_prompt,
+                    chat_id=chat_id,
+                    is_code_request=True
+                )
+                if not success:
+                    self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                    return
+
+                self._handle_code_response(chat_id, message_id, answer)
+                return
 
         # Handle Voice / Audio (Voice-to-Voice Conversation)
         if voice or audio:
@@ -571,12 +752,32 @@ class TelegramBot:
             self._send_rendered_solution_or_text(chat_id, answer, message_id, force_photo=True)
             return
 
-        # Handle Text (Written Question / Math / Science Exercise / Emotional Chat)
+        # Handle Text (App Builder / Code Fix / Written Question / Math / Science / Emotional Chat)
         if text:
             self.send_chat_action(chat_id, "typing")
+            if is_code_or_app_request(text):
+                enhanced_prompt = build_app_builder_prompt(text)
+                success, answer = self.solver.solve(
+                    prompt=enhanced_prompt,
+                    chat_id=chat_id,
+                    is_code_request=True
+                )
+                if not success:
+                    self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                    return
+
+                self._handle_code_response(chat_id, message_id, answer)
+                return
+
             success, answer = self.solver.solve(prompt=text, chat_id=chat_id)
             if not success:
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
+                return
+
+            # If Gemini returned a complete previewable HTML app even from a casual prompt, export + preview it
+            blocks, _ = extract_code_blocks(answer)
+            if find_previewable_html(blocks):
+                self._handle_code_response(chat_id, message_id, answer)
                 return
 
             self._send_rendered_solution_or_text(chat_id, answer, message_id)
@@ -591,6 +792,7 @@ class TelegramBot:
                 "👋 *សួស្តីប្អូនៗ និងសិស្សានុសិស្សទាំងអស់គ្នា!*\n\n"
                 "ខ្ញុំជា *Telegram Study Bot* ជំនួយការដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា បំពាក់ដោយបច្ចេកវិទ្យា *Google Gemini Flash* 🧠✨\n\n"
                 "📚 *សមត្ថភាពចម្បង៖*\n"
+                "• 💻 *បង្កើតកម្មវិធី កែកូដ និង Live Preview (Mini App):* សុំបង្កើតគេហទំព័រ ហ្គេម កម្មវិធីគណនា ឬផ្ញើកូដ/ឯកសារកូដមកឱ្យកែ — Bot នឹងបង្កើតកូដពេញលេញ ផ្ញើប៊ូតុង *Preview កម្មវិធីផ្ទាល់* ក្នុង Telegram និងផ្ញើឯកសារកូដ (.html/.py/.js/.zip) សម្រាប់បើកកែបន្ត!\n"
                 "• 🎬 *ទាញយកវីដេអូគ្មាន Logo (HD Video Downloader):* គ្រាន់តែផ្ញើ Link មកពី TikTok, Facebook (Reels/Watch), YouTube (Shorts/Video), CapCut ឬ Pinterest នោះ Bot នឹងទាញយកវីដេអូ .mp4 គ្មាន Watermark កម្រិត HD ជូនភ្លាមៗ!\n"
                 "• 🎙️ *សន្ទនាដោយសំឡេង (Voice-to-Voice):* ផ្ញើសារសំឡេង (Voice message) មកទីនេះ Bot នឹងស្ដាប់យល់ និងឆ្លើយតបជាសំឡេងមនុស្សពិតៗភ្លាមៗ (គាំទ្រទាំងភាសាខ្មែរ និងភាសាបរទេស)!\n"
                 "• 📸 *ផ្ញើរូបភាពលំហាត់* (ថតរូបពីសៀវភៅ ឬក្រដាសប្រឡង)\n"

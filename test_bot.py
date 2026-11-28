@@ -730,6 +730,178 @@ def test_expressive_tts_and_music_notes():
     print("✓ Expressive Edge TTS (tempo -8% and music note stripping) passed.")
 
 
+def test_app_builder_live_preview_and_code_export():
+    print("Testing Full-Stack App Builder, Live Mini App Preview (/api/preview/<id>), and Portable Code Export...")
+    import tempfile
+    import zipfile
+    from unittest.mock import patch, MagicMock
+    from preview_service import (
+        PreviewStore,
+        is_code_or_app_request,
+        extract_code_blocks,
+        find_previewable_html,
+        inject_telegram_webapp_script,
+        package_code_export,
+        compute_preview_signature,
+        TELEGRAM_WEBAPP_SCRIPT_URL,
+    )
+    from gemini_solver import clean_unwanted_thai as solver_clean_thai
+
+    # 1. Test request detection (Khmer, English, raw code, and non-code questions)
+    assert is_code_or_app_request("សូមបង្កើតកម្មវិធីគណនា (Calculator) ស្អាតមួយ") is True
+    assert is_code_or_app_request("ជួយបង្កើតហ្គេម Snake មួយឱ្យខ្ញុំលេង") is True
+    assert is_code_or_app_request("Build a modern todo web app") is True
+    assert is_code_or_app_request("ជួយកែកូដនេះផង:\n```python\ndef add(a, b):\n    return a - b\n```") is True
+    assert is_code_or_app_request("សួស្តី សុខសប្បាយទេ?") is False
+    assert is_code_or_app_request("គណនាអាំងតេក្រាលពី 0 ដល់ pi/4 នៃ sin^2(x)") is False
+
+    # 2. Verify clean_unwanted_thai preserves Python indentation inside code blocks
+    py_with_thai = "នេះជាកូដ สวัสดี៖\n```python\ndef hello():\n    print('សួស្តី')\n```"
+    cleaned_py = solver_clean_thai(py_with_thai)
+    assert "สวัสดี" not in cleaned_py
+    assert "    print('សួស្តី')" in cleaned_py
+
+    # 3. Test code extraction, Telegram WebApp SDK injection, and zip/html packaging
+    sample_reply = (
+        "នេះជាកម្មវិធីគណនាដ៏ស្អាតមួយសម្រាប់អ្នក!\n\n"
+        "```html\n"
+        "<!DOCTYPE html>\n"
+        "<html lang=\"km\">\n"
+        "<head><title>ម៉ាស៊ីនគិតលេខ</title><style>body{background:#111;color:#fff;}</style></head>\n"
+        "<body><h1>ម៉ាស៊ីនគិតលេខ</h1><script>console.log('ready');</script></body>\n"
+        "</html>\n"
+        "```\n"
+    )
+    blocks, summary = extract_code_blocks(sample_reply)
+    assert len(blocks) == 1
+    assert blocks[0]["is_html"] is True
+    assert "កម្មវិធីគណនា" in summary
+
+    raw_html = find_previewable_html(blocks)
+    assert raw_html is not None
+    ready_html = inject_telegram_webapp_script(raw_html)
+    assert TELEGRAM_WEBAPP_SCRIPT_URL in ready_html
+    assert "Telegram.WebApp.ready()" in ready_html
+
+    fname, fbytes, fmime = package_code_export(blocks, "app_12345", preview_html=ready_html)
+    assert fname == "app_12345.html"
+    assert fmime == "text/html"
+    assert TELEGRAM_WEBAPP_SCRIPT_URL.encode("utf-8") in fbytes
+
+    # Multi-file packaging -> in-memory .zip
+    multi_blocks, _ = extract_code_blocks(
+        "```html\n<!DOCTYPE html><html><head><title>Demo</title></head><body>Hi</body></html>\n```\n"
+        "```python\n# backend\ndef run():\n    return True\n```\n"
+    )
+    zname, zbytes, zmime = package_code_export(multi_blocks, "app_multi", preview_html=ready_html)
+    assert zname.endswith(".zip")
+    assert zmime == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(zbytes), "r") as zf:
+        names = zf.namelist()
+        assert "index.html" in names
+        assert "main.py" in names
+        assert "README.txt" in names
+
+    # 4. Test PreviewStore save/get + TelegramBot end-to-end flow + api/index.py /api/preview/<id>
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        bot = TelegramBot(token="test_bot_token_123")
+        bot.preview_store = PreviewStore(storage_dir=tmp_dir)
+
+        captured_docs = []
+        captured_msgs = []
+        bot.send_chat_action = lambda cid, act: None
+        bot.send_document = lambda **kwargs: (captured_docs.append(kwargs) or "BQACAgIAAxkFAKE_FILE_ID")
+        bot.send_message = lambda cid, text, **kwargs: (captured_msgs.append((cid, text, kwargs)) or True)
+        bot.solver.solve = lambda **kwargs: (True, sample_reply)
+
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 555},
+                "message_id": 77,
+                "text": "សូមបង្កើតកម្មវិធីគណនាស្អាតមួយ"
+            }
+        })
+
+        # Verify sendDocument was called with .html file
+        assert len(captured_docs) == 1
+        assert captured_docs[0]["filename"].endswith(".html")
+        assert b"telegram-web-app.js" in captured_docs[0]["file_bytes"]
+
+        # Verify sendMessage was called with web_app Inline Keyboard button
+        assert len(captured_msgs) == 1
+        _, msg_text, msg_kwargs = captured_msgs[0]
+        assert "ម៉ាស៊ីនគិតលេខ" in msg_text
+        kb = msg_kwargs["reply_markup"]["inline_keyboard"]
+        assert kb[0][0]["text"] == "🚀 Preview កម្មវិធីផ្ទាល់"
+        web_app_url = kb[0][0]["web_app"]["url"]
+        assert "/api/preview/app_" in web_app_url
+
+        # Test api/index.py GET /api/preview/<id> route
+        import api.index as api_index
+        app_id_match = web_app_url.split("/api/preview/")[1].split("?")[0]
+
+        class MockHandler(api_index.handler):
+            def __init__(self, path):
+                self.path = path
+                self.headers = {}
+                self.status_code = None
+                self.resp_headers = {}
+                self.wfile = io.BytesIO()
+            def send_response(self, code):
+                self.status_code = code
+            def send_header(self, k, v):
+                self.resp_headers[k] = v
+            def end_headers(self):
+                pass
+
+        with patch.object(api_index, "PreviewStore", return_value=PreviewStore(storage_dir=tmp_dir)):
+            h_ok = MockHandler(f"/api/preview/{app_id_match}")
+            h_ok.do_GET()
+            assert h_ok.status_code == 200
+            assert "text/html" in h_ok.resp_headers.get("Content-Type", "")
+            body_html = h_ok.wfile.getvalue().decode("utf-8")
+            assert TELEGRAM_WEBAPP_SCRIPT_URL in body_html
+            assert "ម៉ាស៊ីនគិតលេខ" in body_html
+
+            # Also test Vercel rewritten query format (?route=preview&id=...)
+            h_rw = MockHandler(f"/api/index?route=preview&id={app_id_match}")
+            h_rw.do_GET()
+            assert h_rw.status_code == 200
+
+            # Test 404 for nonexistent preview ID
+            h_404 = MockHandler("/api/preview/app_doesnotexist")
+            h_404.do_GET()
+            assert h_404.status_code == 404
+            assert TELEGRAM_WEBAPP_SCRIPT_URL in h_404.wfile.getvalue().decode("utf-8")
+
+        # 5. Test uploaded code document (.py) flow
+        captured_docs.clear()
+        captured_msgs.clear()
+        bot.get_file_bytes = lambda fid: b"def add(a, b):\n    return a - b\n"
+        bot.solver.solve = lambda **kwargs: (
+            True,
+            "ខ្ញុំបានកែកំហុសបូកលេខរួចហើយ!\n```python\n# អនុគមន៍បូកលេខ\ndef add(a, b):\n    return a + b\n```"
+        )
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 555},
+                "message_id": 78,
+                "caption": "ជួយកែកូដនេះផង",
+                "document": {
+                    "file_id": "doc_py_123",
+                    "file_name": "calc.py",
+                    "file_size": 120
+                }
+            }
+        })
+        assert len(captured_docs) == 1
+        assert captured_docs[0]["filename"].endswith(".py")
+        assert b"return a + b" in captured_docs[0]["file_bytes"]
+        assert len(captured_msgs) == 1
+
+    print("✓ Full-Stack App Builder, Live Mini App Preview, and Portable Code Export passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -751,6 +923,7 @@ if __name__ == "__main__":
     test_search_grounding_and_persistent_memory()
     test_cambodia_datetime_and_astrology_instructions()
     test_expressive_tts_and_music_notes()
+    test_app_builder_live_preview_and_code_export()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

@@ -11,6 +11,14 @@
       "destination": "/api/index?route=solution"
     },
     {
+      "source": "/api/preview/:id",
+      "destination": "/api/index?route=preview&id=:id"
+    },
+    {
+      "source": "/preview/:id",
+      "destination": "/api/index?route=preview&id=:id"
+    },
+    {
       "source": "/(.*)",
       "destination": "/api/index"
     }
