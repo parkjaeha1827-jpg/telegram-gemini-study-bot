@@ -9,16 +9,81 @@ Features:
 
 import re
 import asyncio
-from typing import Optional
+from typing import Optional, Tuple
 import edge_tts
 
-# Voice mapping based on user requirements
-VOICE_MAP = {
-    "km": "km-KH-SreymomNeural",     # Khmer (Female: Sreymom / Male: Piseth)
-    "en": "en-US-AvaNeural",          # English (US)
-    "zh": "zh-CN-XiaoxiaoNeural",     # Chinese (Mandarin)
-    "ja": "ja-JP-NanamiNeural"        # Japanese
+# Female neural voices (used when speaker_gender == "male" -> opposite gender)
+FEMALE_VOICE_MAP = {
+    "km": "km-KH-SreymomNeural",     # Khmer Female
+    "en": "en-US-AvaNeural",          # English Female
+    "zh": "zh-CN-XiaoxiaoNeural",     # Chinese Female
+    "ja": "ja-JP-NanamiNeural",       # Japanese Female
 }
+
+# Male neural voices (used when speaker_gender == "female" -> opposite gender)
+MALE_VOICE_MAP = {
+    "km": "km-KH-PisethNeural",       # Khmer Male
+    "en": "en-US-AndrewNeural",       # English Male
+    "zh": "zh-CN-YunxiNeural",        # Chinese Male
+    "ja": "ja-JP-KeitaNeural",        # Japanese Male
+}
+
+# Backward-compatible default voice map
+VOICE_MAP = dict(FEMALE_VOICE_MAP)
+
+# Expressive Prosody (rate, pitch) tuned per emotion for Gemini Live realism
+EMOTION_PROSODY = {
+    "cheerful": ("+5%", "+3Hz"),
+    "curious":  ("+5%", "+2Hz"),
+    "caring":   ("-5%", "-2Hz"),
+    "sassy":    ("+3%", "+2Hz"),
+    "angry":    ("+6%", "-2Hz"),
+}
+
+
+def normalize_lang_code(language: Optional[str], fallback_text: str = "") -> str:
+    """Normalizes language tag ('km', 'km-KH', 'en-US', 'zh-CN', 'ja-JP') into 'km'|'en'|'zh'|'ja'."""
+    if language:
+        code = str(language).strip().lower().split("-")[0].split("_")[0]
+        if code in ("km", "kh", "khmer"):
+            return "km"
+        if code in ("en", "eng", "english"):
+            return "en"
+        if code in ("zh", "cn", "chinese"):
+            return "zh"
+        if code in ("ja", "jp", "japanese"):
+            return "ja"
+    return detect_language(fallback_text) if fallback_text else "km"
+
+
+def select_opposite_gender_voice(
+    speaker_gender: Optional[str] = None,
+    language: Optional[str] = None,
+    text: str = ""
+) -> str:
+    """
+    Opposite-Gender Edge TTS selector:
+    - speaker_gender == "male"   -> AI speaks with FEMALE neural voice
+    - speaker_gender == "female" -> AI speaks with MALE neural voice
+    """
+    lang = normalize_lang_code(language, fallback_text=text)
+    gender = (speaker_gender or "").strip().lower()
+    if gender == "female":
+        return MALE_VOICE_MAP.get(lang, "km-KH-PisethNeural")
+    return FEMALE_VOICE_MAP.get(lang, "km-KH-SreymomNeural")
+
+
+def get_emotion_prosody(emotion: Optional[str] = None, text: str = "") -> Tuple[str, str]:
+    """
+    Computes expressive Edge TTS (rate, pitch) from emotion or narrative/song mode.
+    """
+    if is_expressive_mode(text):
+        return ("-8%", "+0Hz")
+    if emotion:
+        emo = str(emotion).strip().lower()
+        if emo in EMOTION_PROSODY:
+            return EMOTION_PROSODY[emo]
+    return ("+0%", "+0Hz")
 
 
 def detect_language(text: str) -> str:
@@ -160,28 +225,45 @@ def sanitize_text_for_tts(text: str) -> str:
 async def text_to_speech_async(
     text: str,
     voice: Optional[str] = None,
-    rate: Optional[str] = None
+    rate: Optional[str] = None,
+    pitch: Optional[str] = None,
+    speaker_gender: Optional[str] = None,
+    language: Optional[str] = None,
+    emotion: Optional[str] = None
 ) -> Optional[bytes]:
     """
-    Generates natural spoken audio bytes using Microsoft Edge TTS.
-    Supports dynamic speaking rate (e.g. -8% for expressive poetry, storytelling, and songs).
+    Generates natural spoken audio bytes in memory (zero disk writes) using Microsoft Edge TTS.
+    Supports:
+    - Opposite-gender voice selection (male speaker -> female AI voice; female speaker -> male AI voice)
+    - Expressive prosody (rate & pitch dynamically tuned by emotion or poetry/song mode)
     """
-    # Detect expressive rate before stripping musical notes and keywords
-    if rate is None:
-        rate = "-8%" if is_expressive_mode(text) else "+0%"
+    # Compute expressive rate/pitch before stripping musical notes and keywords
+    auto_rate, auto_pitch = get_emotion_prosody(emotion=emotion, text=text)
+    final_rate = rate if rate is not None else auto_rate
+    final_pitch = pitch if pitch is not None else auto_pitch
 
     clean_text = sanitize_text_for_tts(text)
     if not clean_text:
         return None
 
     if not voice:
-        lang = detect_language(clean_text)
-        voice = VOICE_MAP.get(lang, "km-KH-SreymomNeural")
+        voice = select_opposite_gender_voice(
+            speaker_gender=speaker_gender,
+            language=language,
+            text=clean_text
+        )
 
-    # Try selected voice with fallback
-    for target_voice in [voice, "km-KH-SreymomNeural", "en-US-AvaNeural"]:
+    # Deduplicated fallback voice chain preserving gender when possible
+    fallback_km = "km-KH-PisethNeural" if (speaker_gender or "").lower() == "female" else "km-KH-SreymomNeural"
+    fallback_en = "en-US-AndrewNeural" if (speaker_gender or "").lower() == "female" else "en-US-AvaNeural"
+    candidates = list(dict.fromkeys([voice, fallback_km, fallback_en]))
+
+    for target_voice in candidates:
         try:
-            communicate = edge_tts.Communicate(clean_text, target_voice, rate=rate)
+            kwargs = {"rate": final_rate}
+            if final_pitch and final_pitch != "+0Hz":
+                kwargs["pitch"] = final_pitch
+            communicate = edge_tts.Communicate(clean_text, target_voice, **kwargs)
             audio_data = b""
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
@@ -198,11 +280,25 @@ async def text_to_speech_async(
 def text_to_speech(
     text: str,
     voice: Optional[str] = None,
-    rate: Optional[str] = None
+    rate: Optional[str] = None,
+    pitch: Optional[str] = None,
+    speaker_gender: Optional[str] = None,
+    language: Optional[str] = None,
+    emotion: Optional[str] = None
 ) -> Optional[bytes]:
     """Synchronous wrapper for text_to_speech_async."""
     try:
-        return asyncio.run(text_to_speech_async(text, voice=voice, rate=rate))
+        return asyncio.run(
+            text_to_speech_async(
+                text,
+                voice=voice,
+                rate=rate,
+                pitch=pitch,
+                speaker_gender=speaker_gender,
+                language=language,
+                emotion=emotion
+            )
+        )
     except Exception as e:
         print(f"[EdgeTTS Error] {e}")
         return None

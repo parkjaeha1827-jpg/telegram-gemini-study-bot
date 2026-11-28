@@ -765,6 +765,201 @@ class GeminiSolver:
 
         return False, f"⚠️ Gemini API កំពុងមានបញ្ហាឆ្លើយតប: {last_error}"
 
+    def solve_voice_live(
+        self,
+        audio_bytes: bytes,
+        mime_type: str = "audio/ogg",
+        caption: str = "",
+        chat_id: Optional[int] = None
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Single-Call Multimodal Audio + JSON (Google Gemini Live Style):
+        Sends audio directly to gemini-2.5-flash (with fast fallback) with
+        responseMimeType='application/json' to simultaneously return:
+        - speaker_gender: "male" | "female"
+        - language: "km" | "en" | "zh" | "ja"
+        - emotion: "cheerful" | "curious" | "caring" | "sassy" | "angry"
+        - reply_text: Natural spoken reply (9-word rule + probing question for chat,
+                      full clear explanation for academic lessons/exercises).
+        """
+        if not self.api_key:
+            return False, {"error": "❌ Error: GEMINI_API_KEY is not set."}
+
+        encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
+        live_prompt = (
+            "ស្ដាប់សារសំឡេងនេះដោយយកចិត្តទុកដាក់ ហើយវិភាគ និងឆ្លើយតបជា JSON តែមួយគត់ដូច Google Gemini Live៖\n"
+            + (f"បរិបទបន្ថែមពីអ្នកប្រើ៖ {caption}\n" if caption else "")
+            + "១. វិភាគទឹកដមសំឡេង សំនៀង និងសព្វនាមរបស់អ្នកនិយាយ ដើម្បីកំណត់ speaker_gender ('male' ឬ 'female')។\n"
+            "២. កំណត់ភាសាដែលអ្នកនិយាយប្រើ (language: 'km', 'en', 'zh', ឬ 'ja') រួចឆ្លើយតបជាភាសាដដែលនោះ។\n"
+            "៣. កំណត់អារម្មណ៍ឆ្លើយតប emotion មួយក្នុងចំណោម: 'cheerful', 'curious', 'caring', 'sassy', 'angry'។\n"
+            "៤. សរសេរ reply_text បែបនិយាយទូរសព្ទផ្ទាល់ដូចមនុស្សពិត (ប្រើពាក្យឧទាន អូ៎, ហ៊ឹម, នែ៎, អញ្ចឹងហ្អេ៎?, យ៉ាងម៉េចដែរ?) "
+            "និងកែសព្វនាមឱ្យសមតាមភេទ AI ផ្ទុយពីអ្នកនិយាយ (បើអ្នកនិយាយប្រុស AI ជាស្រី; បើអ្នកនិយាយស្រី AI ជាប្រុស)។\n"
+            "៥. ច្បាប់ប្រវែង៖ បើជាការជជែកលេងធម្មតា ត្រូវឆ្លើយខ្លីបំផុតត្រឹម ៩ ពាក្យចុះក្រោម ហើយត្រូវបញ្ចប់ដោយសំណួរដេញដោលត្រឡប់ទៅអ្នកនិយាយវិញជានិច្ច! "
+            "បើជាការសួរមេរៀន លំហាត់ ច្បាប់ ពេទ្យ ឬវិញ្ញាសា ទើបពន្យល់ក្បោះក្បាយលម្អិត។\n"
+            "៦. ហាមដាច់ខាតសញ្ញា Markdown (*, #, `) Emoji និងអក្សរថៃក្នុង reply_text។\n"
+            "ឆ្លើយតបជា JSON តាមទម្រង់នេះ៖\n"
+            '{"speaker_gender": "male", "language": "km", "emotion": "cheerful", "reply_text": "..."}'
+        )
+
+        current_user_parts: List[Dict[str, Any]] = [
+            {"inline_data": {"mime_type": mime_type, "data": encoded_audio}},
+            {"text": live_prompt},
+        ]
+
+        contents: List[Dict[str, Any]] = []
+        if chat_id is not None:
+            history = self.memory.get_history(chat_id)
+            sanitized_history = []
+            expected_role = "user"
+            for turn in history[-8:]:
+                role = turn.get("role")
+                if role == expected_role and turn.get("parts"):
+                    sanitized_history.append(turn)
+                    expected_role = "model" if expected_role == "user" else "user"
+            if sanitized_history and sanitized_history[-1].get("role") == "user":
+                sanitized_history.pop()
+            contents.extend(sanitized_history)
+
+        contents.append({"role": "user", "parts": current_user_parts})
+
+        persona_block = ""
+        if chat_id is not None:
+            try:
+                user_persona = self.persona_store.get_persona(chat_id)
+                persona_block = format_persona_for_system_prompt(user_persona)
+            except Exception:
+                pass
+
+        dynamic_sys_instruction = (
+            f"{SYSTEM_INSTRUCTION}\n\n"
+            f"==================================================\n"
+            f"{get_cambodia_datetime_context()}\n"
+            f"=================================================="
+        )
+        if persona_block:
+            dynamic_sys_instruction += f"\n\n{persona_block}\n=================================================="
+
+        payload = {
+            "contents": contents,
+            "systemInstruction": {"parts": [{"text": dynamic_sys_instruction}]},
+            "generationConfig": {
+                "temperature": 0.95,
+                "maxOutputTokens": 1200,
+                "responseMimeType": "application/json",
+            },
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
+        voice_models = list(dict.fromkeys([
+            "gemini-2.5-flash",
+            self.primary_model,
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-flash-latest",
+        ]))
+
+        last_error = ""
+        for model_name in voice_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=22.0)
+
+                # Retry single-turn if multi-turn caused 400
+                if resp.status_code == 400 and len(contents) > 1:
+                    single_payload = dict(payload)
+                    single_payload["contents"] = [{"role": "user", "parts": current_user_parts}]
+                    resp = requests.post(url, headers=headers, json=single_payload, timeout=22.0)
+
+                if resp.status_code == 200:
+                    ok, raw_text = self._extract_text(resp.json())
+                    if not ok:
+                        continue
+
+                    parsed = self._parse_voice_live_json(raw_text)
+                    reply_text = clean_unwanted_thai(parsed["reply_text"])
+                    try:
+                        from voice_service import clean_text_for_tts
+                        # Clean Markdown/Emoji from reply_text while preserving natural spoken punctuation
+                        reply_text = clean_text_for_tts(reply_text)
+                    except Exception:
+                        pass
+                    parsed["reply_text"] = reply_text
+
+                    if chat_id is not None and reply_text:
+                        user_label = f"[សារសំឡេង ({parsed['speaker_gender']}/{parsed['language']})]"
+                        self.memory.add_turn(chat_id=chat_id, user_text=user_label, model_text=reply_text)
+                        try:
+                            self.persona_store.increment_message_count(chat_id)
+                        except Exception:
+                            pass
+                    return True, parsed
+
+                if resp.status_code in (404, 429, 503):
+                    last_error = f"{model_name}: {resp.status_code}"
+                    continue
+
+                last_error = f"{model_name} ({resp.status_code}): {resp.text[:150]}"
+            except requests.exceptions.Timeout:
+                last_error = f"{model_name} timed out"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        return False, {"error": f"⚠️ Gemini Live Voice កំពុងមានបញ្ហាឆ្លើយតប: {last_error}"}
+
+    @staticmethod
+    def _parse_voice_live_json(raw_text: str) -> Dict[str, str]:
+        """Parses the 4-field Gemini Live JSON response with graceful plain-text fallback."""
+        cleaned = (raw_text or "").strip()
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s*```$', '', cleaned)
+        data = None
+        try:
+            obj = json.loads(cleaned)
+            if isinstance(obj, dict):
+                data = obj
+        except Exception:
+            m = re.search(r'\{.*\}', cleaned, re.DOTALL)
+            if m:
+                try:
+                    obj = json.loads(m.group(0))
+                    if isinstance(obj, dict):
+                        data = obj
+                except Exception:
+                    pass
+
+        if not data:
+            return {
+                "speaker_gender": "male",
+                "language": "km",
+                "emotion": "cheerful",
+                "reply_text": cleaned,
+            }
+
+        gender = str(data.get("speaker_gender") or "male").strip().lower()
+        if gender not in ("male", "female"):
+            gender = "male"
+
+        lang = str(data.get("language") or "km").strip().lower().split("-")[0]
+        if lang not in ("km", "en", "zh", "ja"):
+            lang = "km"
+
+        emotion = str(data.get("emotion") or "cheerful").strip().lower()
+        if emotion not in ("cheerful", "curious", "caring", "sassy", "angry"):
+            emotion = "cheerful"
+
+        reply = str(data.get("reply_text") or "").strip()
+        return {
+            "speaker_gender": gender,
+            "language": lang,
+            "emotion": emotion,
+            "reply_text": reply,
+        }
+
     def _extract_text(self, data: dict) -> Tuple[bool, str]:
         """Extracts final answer text, filtering out internal thought tokens."""
         try:

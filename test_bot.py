@@ -1249,6 +1249,126 @@ def test_ai_image_and_veo_video_generator():
     print("✓ AI Image Generator (100% Free Pollinations), Free 10s Video Generator & 9-Word Rule tests passed.")
 
 
+def test_gemini_live_opposite_gender_voice_and_prosody():
+    print("Testing Gemini Live Single-Call Audio JSON, Opposite-Gender Edge TTS & Expressive Prosody...")
+    import asyncio
+    from unittest.mock import patch, MagicMock
+    from voice_service import (
+        select_opposite_gender_voice,
+        get_emotion_prosody,
+        text_to_speech_async,
+    )
+
+    # 1. Verify Opposite-Gender Voice Mapping across all 4 languages (km, en, zh, ja)
+    # Male speaker -> Female AI voice
+    assert select_opposite_gender_voice("male", "km") == "km-KH-SreymomNeural"
+    assert select_opposite_gender_voice("male", "en") == "en-US-AvaNeural"
+    assert select_opposite_gender_voice("male", "zh") == "zh-CN-XiaoxiaoNeural"
+    assert select_opposite_gender_voice("male", "ja") == "ja-JP-NanamiNeural"
+
+    # Female speaker -> Male AI voice
+    assert select_opposite_gender_voice("female", "km") == "km-KH-PisethNeural"
+    assert select_opposite_gender_voice("female", "en") == "en-US-AndrewNeural"
+    assert select_opposite_gender_voice("female", "zh") == "zh-CN-YunxiNeural"
+    assert select_opposite_gender_voice("female", "ja") == "ja-JP-KeitaNeural"
+
+    # 2. Verify Expressive Prosody (rate & pitch per emotion)
+    assert get_emotion_prosody("cheerful") == ("+5%", "+3Hz")
+    assert get_emotion_prosody("curious") == ("+5%", "+2Hz")
+    assert get_emotion_prosody("caring") == ("-5%", "-2Hz")
+    assert get_emotion_prosody("sassy") == ("+3%", "+2Hz")
+    assert get_emotion_prosody("angry") == ("+6%", "-2Hz")
+
+    # 3. Verify Edge TTS receives exact opposite-gender voice + rate + pitch
+    mock_comm = MagicMock()
+    async def mock_stream():
+        yield {"type": "audio", "data": b"mock_live_voice_mp3"}
+    mock_comm.stream = mock_stream
+
+    with patch("edge_tts.Communicate", return_value=mock_comm) as mock_edge:
+        audio = asyncio.run(
+            text_to_speech_async(
+                "អូ៎ អញ្ចឹងហ្អេ៎? ហើយញ៉ាំបាយនៅ?",
+                speaker_gender="female",
+                language="km",
+                emotion="cheerful"
+            )
+        )
+        assert audio == b"mock_live_voice_mp3"
+        args, kwargs = mock_edge.call_args
+        assert args[1] == "km-KH-PisethNeural"  # Female speaker -> Male Khmer voice
+        assert kwargs["rate"] == "+5%"
+        assert kwargs["pitch"] == "+3Hz"
+
+    # 4. Verify GeminiSolver.solve_voice_live single-call multimodal audio + JSON parsing
+    solver = GeminiSolver(api_key="fake_key", model="gemini-3.1-flash-lite")
+    mock_live_resp = MagicMock()
+    mock_live_resp.status_code = 200
+    mock_live_resp.json.return_value = {
+        "candidates": [{
+            "content": {
+                "parts": [{
+                    "text": json.dumps({
+                        "speaker_gender": "female",
+                        "language": "km",
+                        "emotion": "caring",
+                        "reply_text": "អូ៎ ហត់ណាស់មែនទេ? ចុះញ៉ាំបាយហើយនៅ? ค่า"
+                    }, ensure_ascii=False)
+                }]
+            }
+        }]
+    }
+    with patch("requests.post", return_value=mock_live_resp) as mock_post:
+        ok, meta = solver.solve_voice_live(b"FAKE_OGG_AUDIO", mime_type="audio/ogg", chat_id=44556)
+        assert ok is True
+        assert "gemini-2.5-flash" in mock_post.call_args[0][0]
+        sent_payload = mock_post.call_args[1]["json"]
+        assert sent_payload["generationConfig"]["responseMimeType"] == "application/json"
+        assert meta["speaker_gender"] == "female"
+        assert meta["language"] == "km"
+        assert meta["emotion"] == "caring"
+        assert "ค่า" not in meta["reply_text"]  # Strict no-Thai enforcement
+        assert "ហត់ណាស់មែនទេ" in meta["reply_text"]
+
+    # 5. End-to-end TelegramBot voice flow using solve_voice_live -> opposite-gender TTS -> sendVoice
+    bot = TelegramBot(token="fake_token")
+    actions = []
+    sent_voices = []
+    bot.send_chat_action = lambda cid, act: actions.append(act)
+    bot.get_file_bytes = lambda fid: b"FAKE_OGG_VOICE"
+    bot.send_voice = lambda cid, vb, **kw: (sent_voices.append((cid, vb)) or True)
+    bot.solver.maybe_reflect = lambda cid, txt: None
+
+    import bot_core
+    with patch.object(
+        bot.solver,
+        "solve_voice_live",
+        return_value=(True, {
+            "speaker_gender": "male",
+            "language": "en",
+            "emotion": "curious",
+            "reply_text": "Oh really? What are you up to next?"
+        })
+    ), patch.object(bot_core, "text_to_speech", return_value=b"LIVE_MP3_BUFFER") as mock_tts:
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 8899},
+                "message_id": 55,
+                "voice": {"file_id": "ogg_live_1", "duration": 2}
+            }
+        })
+        assert "record_voice" in actions
+        assert mock_tts.called
+        tts_kwargs = mock_tts.call_args[1]
+        assert tts_kwargs["speaker_gender"] == "male"
+        assert tts_kwargs["language"] == "en"
+        assert tts_kwargs["emotion"] == "curious"
+        assert len(sent_voices) == 1
+        assert sent_voices[0][1] == b"LIVE_MP3_BUFFER"
+
+    print("✓ Gemini Live Single-Call Audio JSON, Opposite-Gender Edge TTS & Expressive Prosody passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -1273,6 +1393,7 @@ if __name__ == "__main__":
     test_app_builder_live_preview_and_code_export()
     test_self_evolving_personality_and_daily_learning()
     test_ai_image_and_veo_video_generator()
+    test_gemini_live_opposite_gender_voice_and_prosody()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

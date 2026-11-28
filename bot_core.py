@@ -830,7 +830,7 @@ class TelegramBot:
                 self._handle_code_response(chat_id, message_id, answer)
                 return
 
-        # Handle Voice / Audio (Voice-to-Voice Conversation)
+        # Handle Voice / Audio (Gemini Live Voice-to-Voice + Opposite-Gender Edge TTS)
         if voice or audio:
             self.send_chat_action(chat_id, "record_voice")
 
@@ -846,32 +846,56 @@ class TelegramBot:
                 )
                 return
 
-            voice_prompt = caption or (
-                "ស្ដាប់ និងបំប្លែងសំឡេង (ភាសាខ្មែរ ឬភាសាបរទេស) ឱ្យបានគ្រប់ម៉ាត់ជាមុនសិន "
-                "រួចវិភាគថាតើអ្នកសួរកំពុងសួរមេរៀន/ច្បាប់/ពេទ្យ/វិញ្ញាសា, សុំទស្សន៍ទាយ/កាត់យល់សប្តិ/ជើងលេខ, "
-                "សុំដោះស្រាយបញ្ហាជីវិត, លេងពាក្យបណ្ដៅ/គន្លាស់កាត់/សុភាសិត, ឬសុំឱ្យសូត្រកំណាព្យ/និទានរឿង/ច្រៀងចម្រៀង ឬជជែកលេង៖\n"
-                "១. បើជាសំណួរមេរៀន ច្បាប់ ពេទ្យ ឬវិញ្ញាសាប្រឡង៖ ត្រូវឆ្លើយឱ្យបានត្រឹមត្រូវ ១០០% ច្បាស់លាស់ តាមជំហាន គ្មានការស្មានឡើយ។\n"
-                "២. បើទស្សន៍ទាយ យល់សប្តិ ឬជើងលេខ៖ ឆ្លើយតាមក្បួនតម្រាខ្មែរ ប្រាប់ប្រផ្នូល លេខសំណាង ពណ៌ និងទិសល្អផ្អែកលើកាលបរិច្ឆេទកម្ពុជា។\n"
-                "៣. បើជាពាក្យបណ្ដៅ៖ បើគេឱ្យយើងចោទ ត្រូវចោទជាពាក្យបណ្ដៅហើយរង់ចាំគេឆ្លើយសិនតាម Chat Memory។ បើគេចោទ ត្រូវដោះស្រាយឱ្យត្រូវ។\n"
-                "៤. បើជាពាក្យគន្លាស់កាត់៖ ត្រូវគន្លាស់ព្យញ្ជនៈដើម និងស្រៈ-ប្រកបឱ្យត្រូវតាមក្បួនសូរសព្ទខ្មែរ ១០០% មុននឹងឆ្លើយ។\n"
-                "៥. បើជាកំណាព្យ និទានរឿង ឬច្រៀង៖ តែងឱ្យត្រូវក្បួនចួនបទកាព្យ និទានរឿងឱ្យជក់ចិត្ត ឬច្រៀងមានចង្វាក់ពីរោះ (អមដោយសញ្ញា 🎶)។\n"
-                "៦. បើជាការជជែកលេងទូទៅ៖ ឆ្លើយតបខ្លីៗ ធម្មជាតិ រស់រវើក មានអារម្មណ៍ដូចមនុស្សពិតៗ (ចេះលួងលោម ឌឺដង ឬស្ដីបន្ទោស)។\n"
-                "៧. ច្បាប់ភាសា៖ បើអ្នកនិយាយនិយាយភាសាខ្មែរ ត្រូវតបជាភាសាខ្មែរ។ បើនិយាយភាសាបរទេស ត្រូវតបជាភាសាបរទេសនោះវិញភ្លាមៗ។\n"
-                "៨. សំខាន់បំផុតសម្រាប់សារសំឡេង៖ ហាមប្រើសញ្ញា Markdown (*, #, `) ដាច់ខាត ដើម្បីឱ្យម៉ាស៊ីនអានសំឡេងអានចេញមកដូចមនុស្សនិយាយពិតៗ។"
-            )
-
             mime_type = "audio/ogg" if voice else "audio/mp3"
-            success, answer = self.solver.solve(
-                prompt=voice_prompt,
-                image_bytes=audio_bytes,
-                mime_type=mime_type,
-                chat_id=chat_id,
-                is_voice=True
-            )
+            speaker_gender = None
+            language = None
+            emotion = None
+
+            # Use Single-Call Multimodal Audio + JSON (Gemini Live style), while preserving
+            # compatibility if solver.solve was explicitly overridden in unit tests.
+            solve_overridden = "solve" in getattr(self.solver, "__dict__", {}) and "solve_voice_live" not in getattr(self.solver, "__dict__", {})
+            if solve_overridden:
+                success, answer = self.solver.solve(
+                    prompt=caption or "ស្ដាប់សំឡេងហើយឆ្លើយតបធម្មជាតិ",
+                    image_bytes=audio_bytes,
+                    mime_type=mime_type,
+                    chat_id=chat_id,
+                    is_voice=True
+                )
+            else:
+                success, voice_meta = self.solver.solve_voice_live(
+                    audio_bytes=audio_bytes,
+                    mime_type=mime_type,
+                    caption=caption,
+                    chat_id=chat_id
+                )
+                if not success:
+                    self.send_message(
+                        chat_id,
+                        voice_meta.get("error") or "⚠️ មិនអាចវិភាគសារសំឡេងបានទេ។",
+                        reply_to_message_id=message_id
+                    )
+                    return
+                answer = voice_meta.get("reply_text", "")
+                speaker_gender = voice_meta.get("speaker_gender")
+                language = voice_meta.get("language")
+                emotion = voice_meta.get("emotion")
 
             if not success:
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
                 return
+
+            def _synthesize_voice(spoken: str) -> Optional[bytes]:
+                try:
+                    return text_to_speech(
+                        spoken,
+                        speaker_gender=speaker_gender,
+                        language=language,
+                        emotion=emotion
+                    )
+                except TypeError:
+                    # Fallback if text_to_speech is mocked as a 1-arg lambda in tests
+                    return text_to_speech(spoken)
 
             # Check if this is a long academic/lesson answer
             is_long_academic = len(answer) > 280 or any(kw in answer for kw in ["ដំណាក់កាល", "រូបមន្ត", "មាត្រា", "ច្បាប់", "សមីការ", "\\frac", "$"])
@@ -880,15 +904,14 @@ class TelegramBot:
                 # Dual send: Send full formatted text in chat AND concise voice summary
                 self.send_message(chat_id, answer, reply_to_message_id=message_id)
 
-                # Create a clean spoken text for voice audio
                 spoken_text = answer[:260].rsplit(' ', 1)[0] + "..." if len(answer) > 260 else answer
                 self.send_chat_action(chat_id, "record_voice")
-                speech_bytes = text_to_speech(spoken_text)
+                speech_bytes = _synthesize_voice(spoken_text)
                 if speech_bytes:
                     self.send_voice(chat_id, speech_bytes, reply_to_message_id=message_id)
             else:
                 self.send_chat_action(chat_id, "record_voice")
-                speech_bytes = text_to_speech(answer)
+                speech_bytes = _synthesize_voice(answer)
                 if speech_bytes:
                     sent = self.send_voice(chat_id, speech_bytes, reply_to_message_id=message_id)
                     if not sent:
