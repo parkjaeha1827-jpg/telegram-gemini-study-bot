@@ -26,6 +26,13 @@ from preview_service import (
     extract_html_title,
     package_code_export,
 )
+from media_gen_service import (
+    parse_image_intent,
+    parse_video_intent,
+    generate_ai_image,
+    generate_ai_video,
+    detect_aspect_ratio,
+)
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -574,6 +581,122 @@ class TelegramBot:
                 parse_mode="HTML"
             )
 
+    def _handle_ai_image_generation(
+        self,
+        chat_id: int,
+        message_id: int,
+        prompt: str
+    ) -> None:
+        """
+        Generates an AI image in memory (zero disk usage) using Gemini Image / Imagen
+        after auto-enhancing the Khmer/English prompt, and sends via sendPhoto.
+        """
+        self.send_chat_action(chat_id, "upload_photo")
+
+        clean_prompt = (prompt or "").strip()
+        if not clean_prompt:
+            self.send_message(
+                chat_id,
+                "🎨 <b>របៀបប្រើប្រាស់មុខងារបង្កើតរូបភាព AI៖</b>\n\n"
+                "• វាយ <code>/img ប្រាសាទអង្គរវត្តពេលថ្ងៃលិច បែបភាពយន្ត</code>\n"
+                "• ឬសរសេរផ្ទាល់៖ <i>«បង្កើតរូបភាព ឆ្មាពាក់វ៉ែនតាខ្មៅអង្គុយផឹកកាហ្វេ»</i>\n"
+                "• អាចបញ្ជាក់ទំហំបន្ថែម៖ <code>16:9</code>, <code>9:16</code> ឬ <code>1:1</code>",
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return
+
+        success, img_bytes, enhanced_prompt, info_or_err = generate_ai_image(
+            prompt=clean_prompt,
+            api_key=self.solver.api_key
+        )
+        if not success or not img_bytes:
+            self.send_message(
+                chat_id,
+                info_or_err,
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return
+
+        self.send_chat_action(chat_id, "upload_photo")
+        short_prompt = clean_unwanted_thai(clean_prompt)
+        if len(short_prompt) > 120:
+            short_prompt = short_prompt[:117] + "..."
+        caption = f"🎨 រូបភាព AI: {short_prompt}\n✨ ម៉ូដែល: {info_or_err}"
+        self.send_photo(chat_id, img_bytes, caption=caption, reply_to_message_id=message_id)
+
+    def _handle_ai_video_generation(
+        self,
+        chat_id: int,
+        message_id: int,
+        prompt: str,
+        image_bytes: Optional[bytes] = None
+    ) -> None:
+        """
+        Generates a 5-10s AI video (Text-to-Video or Image-to-Video) using Google Veo
+        in memory (zero disk usage) and sends via sendVideo (supports_streaming=True).
+        """
+        self.send_chat_action(chat_id, "upload_video")
+
+        clean_prompt = (prompt or "").strip()
+        if not clean_prompt and not image_bytes:
+            self.send_message(
+                chat_id,
+                "🎬 <b>របៀបប្រើប្រាស់មុខងារបង្កើតវីដេអូ AI (៥–១០ វិនាទី)៖</b>\n\n"
+                "១. <b>Text-to-Video:</b> វាយ <code>/video នាគមាសហោះលើភ្នំពេលថ្ងៃរះ 16:9</code>\n"
+                "   ឬសរសេរ៖ <i>«បង្កើតវីដេអូ ទីក្រុងភ្នំពេញពេលយប់មានភ្លើងពណ៌»</i>\n"
+                "២. <b>Image-to-Video:</b> ផ្ញើរូបថតភ្ជាប់ Caption <code>/video ធ្វើឱ្យរូបនេះមានចលនា</code> "
+                "ឬ Reply លើរូបថតណាមួយដោយវាយ <code>/video ...</code>",
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return
+
+        mode_label = "Image-to-Video (រូបថត → វីដេអូ)" if image_bytes else "Text-to-Video (អត្ថបទ → វីដេអូ)"
+        ratio = detect_aspect_ratio(clean_prompt, default="16:9")
+        self.send_message(
+            chat_id,
+            f"🎬 <b>កំពុងបង្កើតវីដេអូ AI ({mode_label})...</b>\n"
+            f"📐 ទំហំ: <code>{ratio}</code> | ⏱️ រយៈពេល: <b>8 វិនាទី</b>\n"
+            f"<i>សូមរង់ចាំបន្តិច ប្រព័ន្ធ Google Veo កំពុង Render វីដេអូជូន... ⏳</i>",
+            reply_to_message_id=message_id,
+            parse_mode="HTML"
+        )
+        self.send_chat_action(chat_id, "upload_video")
+
+        success, video_bytes, enhanced_prompt, info_or_err = generate_ai_video(
+            prompt=clean_prompt,
+            api_key=self.solver.api_key,
+            image_bytes=image_bytes,
+            aspect_ratio=ratio,
+            duration_seconds=8
+        )
+        if not success or not video_bytes:
+            self.send_message(
+                chat_id,
+                info_or_err,
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return
+
+        self.send_chat_action(chat_id, "upload_video")
+        safe_prompt = html.escape(clean_unwanted_thai(clean_prompt or "Image-to-Video Animation")[:120])
+        caption = (
+            f"🎬 <b>វីដេអូ AI ({html.escape(mode_label)})</b>\n"
+            f"📝 <b>Prompt:</b> {safe_prompt}\n"
+            f"✨ <b>ម៉ូដែល:</b> <code>{html.escape(info_or_err)}</code> • {ratio}"
+        )
+        self.send_video(
+            chat_id=chat_id,
+            video=video_bytes,
+            caption=caption,
+            reply_to_message_id=message_id,
+            supports_streaming=True,
+            parse_mode="HTML"
+        )
+
     def handle_update(self, update: Dict[str, Any]) -> None:
         """Processes an incoming Telegram Update dictionary."""
         message = update.get("message") or update.get("edited_message")
@@ -591,9 +714,25 @@ class TelegramBot:
         voice = message.get("voice")
         audio = message.get("audio")
         caption = (message.get("caption") or "").strip()
+        reply_to_msg = message.get("reply_to_message") or {}
+        replied_photo = reply_to_msg.get("photo")
 
-        # Handle Commands
+        # Handle /img and /video commands (including Reply-to-Photo Image-to-Video)
         if text.startswith("/"):
+            lower_cmd = text.split()[0].lower()
+            if lower_cmd.startswith("/img") or lower_cmd.startswith("/image"):
+                img_prompt = parse_image_intent(text) or ""
+                self._handle_ai_image_generation(chat_id, message_id, img_prompt)
+                return
+            if lower_cmd.startswith("/video") or lower_cmd.startswith("/vid"):
+                vid_prompt = parse_video_intent(text) or ""
+                ref_bytes = None
+                if replied_photo:
+                    self.send_chat_action(chat_id, "upload_video")
+                    ref_bytes = self.get_file_bytes(replied_photo[-1].get("file_id", ""))
+                self._handle_ai_video_generation(chat_id, message_id, vid_prompt, image_bytes=ref_bytes)
+                return
+
             self._handle_command(chat_id, message_id, text)
             return
 
@@ -710,13 +849,27 @@ class TelegramBot:
             self.solver.maybe_reflect(chat_id, caption or answer)
             return
 
-        # Handle Photo (Homework Image)
+        # Handle Photo (Image-to-Video with caption OR Homework Image Solver)
         if photo:
-            self.send_chat_action(chat_id, "typing")
-
-            # Select highest resolution photo (last in the list)
             best_photo = photo[-1]
             file_id = best_photo.get("file_id")
+
+            # Check if user attached a photo with a video-generation caption (Image-to-Video)
+            caption_video_prompt = parse_video_intent(caption) if caption else None
+            if caption_video_prompt is not None:
+                self.send_chat_action(chat_id, "upload_video")
+                image_bytes = self.get_file_bytes(file_id)
+                if not image_bytes:
+                    self.send_message(
+                        chat_id,
+                        "❌ មិនអាចទាញយករូបភាពសម្រាប់បង្កើតវីដេអូបានទេ។ សូមព្យាយាមផ្ញើម្តងទៀត។",
+                        reply_to_message_id=message_id
+                    )
+                    return
+                self._handle_ai_video_generation(chat_id, message_id, caption_video_prompt, image_bytes=image_bytes)
+                return
+
+            self.send_chat_action(chat_id, "typing")
 
             self.send_message(
                 chat_id,
@@ -755,8 +908,24 @@ class TelegramBot:
             self._send_rendered_solution_or_text(chat_id, answer, message_id, force_photo=True)
             return
 
-        # Handle Text (App Builder / Code Fix / Written Question / Math / Science / Emotional Chat)
+        # Handle Text (AI Image / AI Video / App Builder / Math / Science / Emotional Chat)
         if text:
+            # 1. Natural Intent: AI Image Generator ("បង្កើតរូបភាព...", "គូររូប...")
+            img_intent_prompt = parse_image_intent(text)
+            if img_intent_prompt is not None:
+                self._handle_ai_image_generation(chat_id, message_id, img_intent_prompt)
+                return
+
+            # 2. Natural Intent: AI Video Generator ("បង្កើតវីដេអូ...", "ធ្វើវីដេអូ...", or Reply to photo)
+            vid_intent_prompt = parse_video_intent(text)
+            if vid_intent_prompt is not None:
+                ref_bytes = None
+                if replied_photo:
+                    self.send_chat_action(chat_id, "upload_video")
+                    ref_bytes = self.get_file_bytes(replied_photo[-1].get("file_id", ""))
+                self._handle_ai_video_generation(chat_id, message_id, vid_intent_prompt, image_bytes=ref_bytes)
+                return
+
             self.send_chat_action(chat_id, "typing")
             if is_code_or_app_request(text):
                 enhanced_prompt = build_app_builder_prompt(text)
@@ -798,6 +967,7 @@ class TelegramBot:
                 "👋 *សួស្តីប្អូនៗ និងសិស្សានុសិស្សទាំងអស់គ្នា!*\n\n"
                 "ខ្ញុំជា *Telegram Study Bot* ជំនួយការដោះស្រាយលំហាត់គ្រប់មុខវិជ្ជា បំពាក់ដោយបច្ចេកវិទ្យា *Google Gemini Flash* 🧠✨\n\n"
                 "📚 *សមត្ថភាពចម្បង៖*\n"
+                "• 🎨 *បង្កើតរូបភាព និងវីដេអូ AI (Image & Veo Video):* វាយ `/img <ពាក្យបញ្ជា>` ឬ «បង្កើតរូបភាព...» ដើម្បីគូររូប HD ក្នុង ៥-១០ វិនាទី និង `/video <ពាក្យបញ្ជា>` ឬ «បង្កើតវីដេអូ...» (រួមទាំង Image-to-Video ពីរូបថត)!\n"
                 "• 💻 *បង្កើតកម្មវិធី កែកូដ និង Live Preview (Mini App):* សុំបង្កើតគេហទំព័រ ហ្គេម កម្មវិធីគណនា ឬផ្ញើកូដ/ឯកសារកូដមកឱ្យកែ — Bot នឹងបង្កើតកូដពេញលេញ ផ្ញើប៊ូតុង *Preview កម្មវិធីផ្ទាល់* ក្នុង Telegram និងផ្ញើឯកសារកូដ (.html/.py/.js/.zip) សម្រាប់បើកកែបន្ត!\n"
                 "• 🎬 *ទាញយកវីដេអូគ្មាន Logo (HD Video Downloader):* គ្រាន់តែផ្ញើ Link មកពី TikTok, Facebook (Reels/Watch), YouTube (Shorts/Video), CapCut ឬ Pinterest នោះ Bot នឹងទាញយកវីដេអូ .mp4 គ្មាន Watermark កម្រិត HD ជូនភ្លាមៗ!\n"
                 "• 🎙️ *សន្ទនាដោយសំឡេង (Voice-to-Voice):* ផ្ញើសារសំឡេង (Voice message) មកទីនេះ Bot នឹងស្ដាប់យល់ និងឆ្លើយតបជាសំឡេងមនុស្សពិតៗភ្លាមៗ (គាំទ្រទាំងភាសាខ្មែរ និងភាសាបរទេស)!\n"

@@ -1036,6 +1036,175 @@ def test_self_evolving_personality_and_daily_learning():
     print("✓ Self-Evolving Personality & Daily Learning passed.")
 
 
+def test_ai_image_and_veo_video_generator():
+    print("Testing AI Image Generator (gemini-2.5-flash-image/Imagen) & Veo Video Generator (Text/Image-to-Video)...")
+    import base64
+    from unittest.mock import patch, MagicMock
+    from media_gen_service import (
+        parse_image_intent,
+        parse_video_intent,
+        detect_aspect_ratio,
+        enhance_media_prompt,
+        generate_ai_image,
+        generate_ai_video,
+    )
+
+    # 1. Verify Command & Natural Intent parsing
+    assert parse_image_intent("/img ប្រាសាទអង្គរវត្តពេលថ្ងៃលិច") == "ប្រាសាទអង្គរវត្តពេលថ្ងៃលិច"
+    assert parse_image_intent("បង្កើតរូបភាព ឆ្មាពាក់វ៉ែនតាខ្មៅ") == "ឆ្មាពាក់វ៉ែនតាខ្មៅ"
+    assert parse_image_intent("គូររូប ភ្នំពេញពេលយប់ 16:9") == "ភ្នំពេញពេលយប់ 16:9"
+    assert parse_image_intent("សួស្តី សុខសប្បាយទេ?") is None
+
+    assert parse_video_intent("/video នាគមាសហោះលើភ្នំ 9:16") == "នាគមាសហោះលើភ្នំ 9:16"
+    assert parse_video_intent("បង្កើតវីដេអូ ថ្ងៃរះលើសមុទ្រ") == "ថ្ងៃរះលើសមុទ្រ"
+    assert parse_video_intent("ធ្វើវីដេអូ រូបនេះឱ្យមានចលនា") == "រូបនេះឱ្យមានចលនា"
+    assert parse_video_intent("គណនាលីមីត x -> 0") is None
+
+    assert detect_aspect_ratio("នាគហោះ 9:16 បញ្ឈរ", default="16:9") == "9:16"
+    assert detect_aspect_ratio("sunset landscape 16:9", default="1:1") == "16:9"
+
+    # 2. Verify Auto Prompt Enhancer uses gemini-2.5-flash
+    mock_enh = MagicMock()
+    mock_enh.status_code = 200
+    mock_enh.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "Cinematic sunset over Angkor Wat, realistic golden lighting, 4k high resolution"}]}}]
+    }
+    with patch("requests.post", return_value=mock_enh) as mock_post:
+        en = enhance_media_prompt("ប្រាសាទអង្គរវត្តពេលថ្ងៃលិច", media_type="image", api_key="fake_key")
+        assert "Angkor Wat" in en
+        assert "gemini-2.5-flash" in mock_post.call_args[0][0]
+
+    # 3. Verify Fast AI Image Generation (gemini-2.5-flash-image)
+    fake_png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nFAKE_AI_IMAGE_BYTES").decode("ascii")
+    mock_img_resp = MagicMock()
+    mock_img_resp.status_code = 200
+    mock_img_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": fake_png_b64}}]}}]
+    }
+    with patch("media_gen_service.enhance_media_prompt", return_value="Cinematic Angkor Wat sunset"), \
+         patch("requests.post", return_value=mock_img_resp) as mock_img_post:
+        ok, img_bytes, enh, model_used = generate_ai_image("ប្រាសាទអង្គរវត្ត", api_key="fake_key")
+        assert ok is True
+        assert img_bytes == b"\x89PNG\r\n\x1a\nFAKE_AI_IMAGE_BYTES"
+        assert model_used == "gemini-2.5-flash-image"
+        sent_body = mock_img_post.call_args[1]["json"]
+        assert "IMAGE" in sent_body["generationConfig"]["responseModalities"]
+
+    # 4. Verify Veo Video Generation (Image-to-Video + Polling + MP4 memory buffer)
+    mock_start = MagicMock()
+    mock_start.status_code = 200
+    mock_start.json.return_value = {"name": "models/veo-2.0-generate-001/operations/op_xyz123"}
+
+    mock_poll_pending = MagicMock()
+    mock_poll_pending.status_code = 200
+    mock_poll_pending.json.return_value = {"done": False}
+
+    mock_poll_done = MagicMock()
+    mock_poll_done.status_code = 200
+    mock_poll_done.json.return_value = {
+        "done": True,
+        "response": {
+            "generateVideoResponse": {
+                "generatedSamples": [
+                    {"video": {"uri": "https://generativelanguage.googleapis.com/v1beta/files/vid123:download?alt=media"}}
+                ]
+            }
+        }
+    }
+
+    mock_mp4_dl = MagicMock()
+    mock_mp4_dl.status_code = 200
+    mock_mp4_dl.content = b"\x00\x00\x00\x18ftypmp42FAKE_VEO_VIDEO"
+
+    with patch("media_gen_service.enhance_media_prompt", return_value="Cinematic dragon flying over misty mountains"), \
+         patch("requests.post", return_value=mock_start) as mock_veo_post, \
+         patch("requests.get", side_effect=[mock_poll_pending, mock_poll_done, mock_mp4_dl]):
+        ok, vid_bytes, enh, model_used = generate_ai_video(
+            prompt="នាគហោះលើភ្នំ 9:16",
+            api_key="fake_key",
+            image_bytes=b"FAKE_REF_JPEG",
+            duration_seconds=8,
+            poll_interval=0.01,
+            max_wait_seconds=5.0
+        )
+        assert ok is True
+        assert vid_bytes == b"\x00\x00\x00\x18ftypmp42FAKE_VEO_VIDEO"
+        assert model_used == "veo-2.0-generate-001"
+        veo_payload = mock_veo_post.call_args[1]["json"]
+        assert veo_payload["parameters"]["durationSeconds"] == 8
+        assert veo_payload["parameters"]["aspectRatio"] == "9:16"
+        assert "bytesBase64Encoded" in veo_payload["instances"][0]["image"]
+
+    # 5. Verify Veo Billing Error produces clear Khmer Google AI Studio Billing guidance
+    mock_billing_err = MagicMock()
+    mock_billing_err.status_code = 403
+    mock_billing_err.text = '{"error": {"message": "Veo is only accessible to billed users. Please enable billing."}}'
+    with patch("media_gen_service.enhance_media_prompt", return_value="Cinematic ocean wave"), \
+         patch("requests.post", return_value=mock_billing_err):
+        ok, vid_bytes, _, err_kh = generate_ai_video("រលកសមុទ្រ", api_key="fake_key")
+        assert ok is False
+        assert vid_bytes is None
+        assert "Billing" in err_kh
+        assert "Google AI Studio" in err_kh
+
+    # 6. Verify TelegramBot end-to-end routing (/img, natural video, photo+caption Image-to-Video, reply-to-photo)
+    bot = TelegramBot(token="fake_token")
+    actions = []
+    sent_photos = []
+    sent_videos = []
+    sent_msgs = []
+    bot.send_chat_action = lambda cid, act: actions.append(act)
+    bot.send_photo = lambda chat_id, photo_bytes, **kw: (sent_photos.append((chat_id, photo_bytes, kw)) or True)
+    bot.send_video = lambda chat_id, video, **kw: (sent_videos.append((chat_id, video, kw)) or True)
+    bot.send_message = lambda cid, txt, **kw: (sent_msgs.append((cid, txt, kw)) or True)
+    bot.get_file_bytes = lambda fid: b"FAKE_UPLOADED_PHOTO"
+
+    import bot_core
+    with patch.object(bot_core, "generate_ai_image", return_value=(True, b"PNG_BYTES", "Enhanced", "gemini-2.5-flash-image")), \
+         patch.object(bot_core, "generate_ai_video", return_value=(True, b"MP4_BYTES", "Enhanced Vid", "veo-2.0-generate-001")) as mock_bot_vid:
+        # 6a. /img command
+        bot.handle_update({"message": {"chat": {"id": 321}, "message_id": 1, "text": "/img ប្រាសាទអង្គរវត្ត"}})
+        assert "upload_photo" in actions
+        assert len(sent_photos) == 1
+        assert sent_photos[0][1] == b"PNG_BYTES"
+
+        # 6b. Photo + Caption Image-to-Video
+        actions.clear()
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 321},
+                "message_id": 2,
+                "caption": "បង្កើតវីដេអូ ឱ្យរូបនេះមានចលនាស្រទន់",
+                "photo": [{"file_id": "ph_1"}]
+            }
+        })
+        assert "upload_video" in actions
+        assert len(sent_videos) == 1
+        assert sent_videos[0][1] == b"MP4_BYTES"
+        assert sent_videos[0][2].get("supports_streaming") is True
+        assert mock_bot_vid.call_args[1]["image_bytes"] == b"FAKE_UPLOADED_PHOTO"
+
+        # 6c. Reply-to-photo /video Image-to-Video
+        sent_videos.clear()
+        bot.handle_update({
+            "message": {
+                "chat": {"id": 321},
+                "message_id": 3,
+                "text": "/video ធ្វើឱ្យរូបនេះហោះឡើងលើ",
+                "reply_to_message": {"photo": [{"file_id": "ph_replied"}]}
+            }
+        })
+        assert len(sent_videos) == 1
+        assert mock_bot_vid.call_args[1]["image_bytes"] == b"FAKE_UPLOADED_PHOTO"
+
+    # 7. Verify vercel.json maxDuration >= 60
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vercel.json"), "r", encoding="utf-8") as f:
+        vj = json.load(f)
+        assert vj["functions"]["api/index.py"]["maxDuration"] >= 60
+
+    print("✓ AI Image Generator & Veo Video Generator tests passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -1059,6 +1228,7 @@ if __name__ == "__main__":
     test_expressive_tts_and_music_notes()
     test_app_builder_live_preview_and_code_export()
     test_self_evolving_personality_and_daily_learning()
+    test_ai_image_and_veo_video_generator()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")
