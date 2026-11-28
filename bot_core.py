@@ -420,17 +420,43 @@ class TelegramBot:
 
         info = extract_video_info(video_url, platform_code)
         if not info or not info.get("direct_url"):
+            cookie_env = info.get("cookie_env") if isinstance(info, dict) else None
+            cookie_configured = bool(info.get("cookie_configured")) if isinstance(info, dict) else False
+
+            if cookie_env and cookie_configured:
+                err_msg = (
+                    f"❌ <b>មិនអាចទាញយកវីដេអូ Private បានទេ ({cookie_env} អាចផុតកំណត់!)</b>\n\n"
+                    f"🔑 ប្រព័ន្ធបានសាកល្បងទាញយកទាំង Public និង Authenticated Cookie (<code>{cookie_env}</code>) "
+                    f"ប៉ុន្តែ Cookie នេះអាចផុតកំណត់ ឬមិនមានសិទ្ធិមើលវីដេអូនេះ។\n\n"
+                    f"📌 <b>វិធីដោះស្រាយ៖</b> សូមចូលទៅ Update តម្លៃ <code>{cookie_env}</code> ថ្មីនៅក្នុង "
+                    f"<b>Vercel Settings → Environment Variables</b> រួច Redeploy។"
+                )
+            elif cookie_env:
+                err_msg = (
+                    "❌ <b>មិនអាចទាញយកវីដេអូបានទេ</b>\n\n"
+                    "• ប្រសិនបើជា Link សាធារណៈ (Public)៖ សូមពិនិត្យតំណភ្ជាប់ រួចព្យាយាមម្ដងទៀត។\n"
+                    f"• ប្រសិនបើជា Link ឯកជន (Private / Friends-only / Group / Member-only)៖ "
+                    f"សូមបន្ថែម <code>{cookie_env}</code> នៅក្នុង <b>Vercel Settings → Environment Variables</b> ដើម្បីឱ្យ Bot អាចទាញយកវីដេអូ Private បាន!"
+                )
+            else:
+                err_msg = (
+                    "❌ <b>មិនអាចទាញយកវីដេអូបានទេ</b>\n\n"
+                    "សូមពិនិត្យមើលថាតើតំណភ្ជាប់វីដេអូនេះជាសាធារណៈ (Public) ឬយ៉ាងណា "
+                    "ហើយព្យាយាមសាកល្បងម្ដងទៀត។"
+                )
+
             self.send_message(
                 chat_id,
-                "❌ <b>មិនអាចទាញយកវីដេអូបានទេ</b>\n\n"
-                "សូមពិនិត្យមើលថាតើតំណភ្ជាប់វីដេអូនេះជាសាធារណៈ (Public) ឬយ៉ាងណា "
-                "ហើយព្យាយាមសាកល្បងម្ដងទៀត។",
+                err_msg,
                 reply_to_message_id=message_id,
                 parse_mode="HTML"
             )
             return
 
         direct_url = info["direct_url"]
+        is_private = bool(info.get("is_private") or info.get("requires_buffer"))
+        auth_cookie = info.get("auth_cookie")
+        referer = info.get("referer")
         platform_names = {
             "tiktok": "TikTok",
             "facebook": "Facebook",
@@ -448,6 +474,8 @@ class TelegramBot:
 
         if platform_code.lower() == "capcut":
             quality_text = "Original Template HD"
+        elif is_private:
+            quality_text = "Private Link (Authenticated) • HD"
         else:
             quality_text = "គ្មាន Watermark (No Logo) • HD"
 
@@ -459,12 +487,56 @@ class TelegramBot:
             f"🤖 <i>ទាញយកដោយជោគជ័យតាមរយៈ Telegram Study Bot</i>"
         )
 
-        # Step 1: Direct URL Streaming (Zero RAM on Vercel)
+        # Private Video Path: Telegram servers lack user cookies, so Vercel fetches directly
+        # into Memory Buffer (with Cookie & Referer) and uploads via multipart sendVideo!
+        if is_private:
+            self.send_chat_action(chat_id, "upload_video")
+            video_bytes, total_size = fetch_video_buffer(
+                direct_url,
+                max_bytes=48 * 1024 * 1024,
+                original_url=video_url,
+                cookie=auth_cookie,
+                referer=referer
+            )
+            if video_bytes:
+                if self.send_video(
+                    chat_id,
+                    video_bytes,
+                    caption=caption,
+                    reply_to_message_id=message_id,
+                    supports_streaming=True,
+                    parse_mode="HTML"
+                ):
+                    return
+
+            if total_size and total_size > 48 * 1024 * 1024:
+                size_mb = f"{total_size / (1024 * 1024):.1f} MB"
+                self.send_message(
+                    chat_id,
+                    f"⚠️ <b>វីដេអូ Private នេះមានទំហំធំពេក ({size_mb})</b>\n\n"
+                    "Telegram Bot API កំណត់ការផ្ញើឯកសារវីដេអូអតិបរមាត្រឹម <b>50MB</b> ប៉ុណ្ណោះ ហើយដោយសារជា Link Private "
+                    "ទើបមិនអាចផ្ញើតាម Direct Link ដោយគ្មាន Cookie បានទេ។",
+                    reply_to_message_id=message_id,
+                    parse_mode="HTML"
+                )
+                return
+
+            env_hint = {"facebook": "FB_COOKIE", "youtube": "YT_COOKIE", "tiktok": "TT_COOKIE"}.get(platform_code.lower(), "COOKIE")
+            self.send_message(
+                chat_id,
+                f"❌ <b>មិនអាចទាញយក Stream វីដេអូ Private ចូល Memory បានទេ</b>\n\n"
+                f"🔑 សូមពិនិត្យ និង Update <code>{env_hint}</code> នៅក្នុង <b>Vercel Settings → Environment Variables</b> ព្រោះ Cookie អាចផុតកំណត់។",
+                reply_to_message_id=message_id,
+                parse_mode="HTML"
+            )
+            return
+
+        # Public Video Path - Step 1: Direct URL Streaming (Zero RAM on Vercel)
         self.send_chat_action(chat_id, "upload_video")
         if self.send_video(chat_id, direct_url, caption=caption, reply_to_message_id=message_id, parse_mode="HTML"):
             return
 
-        # Step 2: In-Memory Buffer Fallback (< 48MB)
+        # Public Video Path - Step 2: In-Memory Buffer Fallback (< 48MB)
         self.send_chat_action(chat_id, "upload_video")
         video_bytes, total_size = fetch_video_buffer(direct_url, max_bytes=48 * 1024 * 1024, original_url=video_url)
         if video_bytes:

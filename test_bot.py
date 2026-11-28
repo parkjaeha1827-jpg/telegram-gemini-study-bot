@@ -1369,6 +1369,177 @@ def test_gemini_live_opposite_gender_voice_and_prosody():
     print("✓ Gemini Live Single-Call Audio JSON, Opposite-Gender Edge TTS & Expressive Prosody passed.")
 
 
+def test_hybrid_public_and_private_video_downloader():
+    print("Testing Hybrid Public & Private Video Downloader (FB_COOKIE, YT_COOKIE, TT_COOKIE & Private Buffer Upload)...")
+    from unittest.mock import patch, MagicMock
+    from video_service import (
+        detect_video_url,
+        extract_facebook_private_video,
+        extract_tiktok_private_video,
+        extract_youtube_private_video,
+        fetch_video_buffer,
+    )
+
+    # 1. Verify Facebook private group post URL detection
+    det_grp = detect_video_url("https://www.facebook.com/groups/123456789/posts/987654321/")
+    assert det_grp is not None and det_grp[1] == "facebook"
+
+    # 2. Test Facebook Private Extractor (FB_COOKIE -> browser_native_hd_url + unescape \/)
+    fb_private_html = (
+        '<html><head><meta property="og:title" content="Private Group Video ค่า"></head>'
+        '<body><script>{"browser_native_hd_url":"https:\\/\\/video.xx.fbcdn.net\\/v\\/t42\\/private_hd.mp4?efg=1&amp;oe=2"}</script></body></html>'
+    )
+    mock_fb_resp = MagicMock()
+    mock_fb_resp.status_code = 200
+    mock_fb_resp.url = "https://www.facebook.com/groups/123/posts/456/"
+    mock_fb_resp.text = fb_private_html
+    with patch("requests.get", return_value=mock_fb_resp) as mock_fb_get:
+        res = extract_facebook_private_video("https://www.facebook.com/groups/123/posts/456/", "c_user=1; xs=secret;")
+        assert res is not None and res["success"] is True
+        assert res["is_private"] is True
+        assert res["requires_buffer"] is True
+        assert res["direct_url"].startswith("https://video.xx.fbcdn.net/v/t42/private_hd.mp4")
+        assert "ค่า" not in res["title"]
+        assert mock_fb_get.call_args[1]["headers"]["Cookie"] == "c_user=1; xs=secret;"
+
+    # 3. Test TikTok Private Extractor (TT_COOKIE -> __UNIVERSAL_DATA_FOR_REHYDRATION__ playAddr)
+    tt_json = json.dumps({
+        "__DEFAULT_SCOPE__": {
+            "webapp.video-detail": {
+                "itemInfo": {
+                    "itemStruct": {
+                        "desc": "Friends Only TikTok",
+                        "author": {"nickname": "Sokha"},
+                        "video": {"playAddr": "https://v16-webapp.tiktok.com/private/vid.mp4"}
+                    }
+                }
+            }
+        }
+    })
+    mock_tt_resp = MagicMock()
+    mock_tt_resp.status_code = 200
+    mock_tt_resp.text = f'<html><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">{tt_json}</script></html>'
+    with patch("requests.get", return_value=mock_tt_resp) as mock_tt_get:
+        res_tt = extract_tiktok_private_video("https://www.tiktok.com/@sokha/video/999", "sessionid=tt_secret;")
+        assert res_tt is not None and res_tt["success"] is True
+        assert res_tt["is_private"] is True
+        assert res_tt["direct_url"] == "https://v16-webapp.tiktok.com/private/vid.mp4"
+        assert res_tt["author"] == "Sokha"
+        assert mock_tt_get.call_args[1]["headers"]["Cookie"] == "sessionid=tt_secret;"
+
+    # 4. Test YouTube Private Extractor (YT_COOKIE + SAPISIDHASH -> InnerTube player streamingData < 48MB)
+    mock_yt_resp = MagicMock()
+    mock_yt_resp.status_code = 200
+    mock_yt_resp.json.return_value = {
+        "playabilityStatus": {"status": "OK"},
+        "videoDetails": {"title": "Unlisted Lesson", "author": "Teacher Dara"},
+        "streamingData": {
+            "formats": [
+                {
+                    "mimeType": 'video/mp4; codecs="avc1.64001F, mp4a.40.2"',
+                    "height": 720,
+                    "qualityLabel": "720p",
+                    "contentLength": str(12 * 1024 * 1024),
+                    "url": "https://rr1.googlevideo.com/videoplayback?private=1"
+                }
+            ]
+        }
+    }
+    with patch("requests.post", return_value=mock_yt_resp) as mock_yt_post:
+        res_yt = extract_youtube_private_video(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "dQw4w9WgXcQ",
+            "SAPISID=abc123; SID=xyz456"
+        )
+        assert res_yt is not None and res_yt["success"] is True
+        assert res_yt["is_private"] is True
+        assert res_yt["direct_url"] == "https://rr1.googlevideo.com/videoplayback?private=1"
+        sent_hdrs = mock_yt_post.call_args[1]["headers"]
+        assert "SAPISIDHASH " in sent_hdrs.get("Authorization", "")
+        assert sent_hdrs["Cookie"] == "SAPISID=abc123; SID=xyz456"
+
+    # 5. Test fetch_video_buffer forwards Cookie & Referer headers in memory
+    mock_stream = MagicMock()
+    mock_stream.status_code = 200
+    mock_stream.headers = {"Content-Length": "18"}
+    mock_stream.iter_content.return_value = [b"PRIVATE_MP4_BUFFER"]
+    with patch("requests.get", return_value=mock_stream) as mock_buf_get:
+        buf, sz = fetch_video_buffer(
+            "https://video.xx.fbcdn.net/private.mp4",
+            cookie="c_user=1; xs=secret;",
+            referer="https://www.facebook.com/"
+        )
+        assert buf == b"PRIVATE_MP4_BUFFER"
+        assert sz == 18
+        buf_hdrs = mock_buf_get.call_args[1]["headers"]
+        assert buf_hdrs["Cookie"] == "c_user=1; xs=secret;"
+        assert buf_hdrs["Referer"] == "https://www.facebook.com/"
+
+    # 6. Test TelegramBot Private Buffer Upload (skips direct URL) + Expired Cookie Notice + >50MB Notice
+    bot = TelegramBot(token="fake_token")
+    sent_videos = []
+    sent_msgs = []
+    bot.send_chat_action = lambda cid, act: None
+    bot.send_video = lambda cid, vid, **kw: (sent_videos.append((cid, vid, kw)) or True)
+    bot.send_message = lambda cid, txt, **kw: (sent_msgs.append((cid, txt, kw)) or True)
+
+    import bot_core
+    # 6a. Private video goes straight to memory buffer upload (NOT URL string)
+    with patch.object(bot_core, "extract_video_info", return_value={
+        "success": True,
+        "direct_url": "https://video.xx.fbcdn.net/private_hd.mp4",
+        "title": "Group Reel",
+        "author": "FB Group",
+        "platform": "Facebook",
+        "platform_code": "facebook",
+        "is_private": True,
+        "requires_buffer": True,
+        "auth_cookie": "c_user=1; xs=abc;",
+        "referer": "https://www.facebook.com/",
+    }), patch.object(bot_core, "fetch_video_buffer", return_value=(b"PRIVATE_BYTES", 1024)) as mock_fb_buf:
+        bot.handle_update({"message": {"chat": {"id": 900}, "message_id": 10, "text": "https://www.facebook.com/reel/999"}})
+        assert mock_fb_buf.called
+        assert mock_fb_buf.call_args[1]["cookie"] == "c_user=1; xs=abc;"
+        assert len(sent_videos) == 1
+        assert sent_videos[0][1] == b"PRIVATE_BYTES"
+        assert sent_videos[0][2].get("supports_streaming") is True
+
+    # 6b. Private video > 50MB notifies user clearly
+    sent_msgs.clear()
+    with patch.object(bot_core, "extract_video_info", return_value={
+        "success": True,
+        "direct_url": "https://video.xx.fbcdn.net/huge_private.mp4",
+        "title": "Huge Private",
+        "author": "FB",
+        "platform": "Facebook",
+        "platform_code": "facebook",
+        "is_private": True,
+        "requires_buffer": True,
+        "auth_cookie": "c_user=1;",
+        "referer": "https://www.facebook.com/",
+    }), patch.object(bot_core, "fetch_video_buffer", return_value=(None, 65 * 1024 * 1024)):
+        bot.handle_update({"message": {"chat": {"id": 900}, "message_id": 11, "text": "https://www.facebook.com/reel/888"}})
+        assert len(sent_msgs) == 1
+        assert "50MB" in sent_msgs[0][1]
+
+    # 6c. Expired cookie sends clear Khmer Vercel Settings notice
+    sent_msgs.clear()
+    with patch.object(bot_core, "extract_video_info", return_value={
+        "success": False,
+        "direct_url": None,
+        "platform_code": "facebook",
+        "cookie_env": "FB_COOKIE",
+        "cookie_configured": True,
+        "error_reason": "cookie_expired",
+    }):
+        bot.handle_update({"message": {"chat": {"id": 900}, "message_id": 12, "text": "https://www.facebook.com/reel/777"}})
+        assert len(sent_msgs) == 1
+        assert "FB_COOKIE" in sent_msgs[0][1]
+        assert "Vercel Settings" in sent_msgs[0][1]
+
+    print("✓ Hybrid Public & Private Video Downloader tests passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -1394,6 +1565,7 @@ if __name__ == "__main__":
     test_self_evolving_personality_and_daily_learning()
     test_ai_image_and_veo_video_generator()
     test_gemini_live_opposite_gender_voice_and_prosody()
+    test_hybrid_public_and_private_video_downloader()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

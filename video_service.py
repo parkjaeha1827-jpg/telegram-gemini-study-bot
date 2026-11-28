@@ -14,13 +14,56 @@ Constraints:
 - Zero-RAM direct streaming URLs with memory buffer fallback (<48MB)
 """
 
+import os
 import io
 import re
 import json
+import time
 import html
+import hashlib
 import urllib.parse
 from typing import Optional, Dict, Any, Tuple
 import requests
+
+COOKIE_ENV_MAP = {
+    "facebook": "FB_COOKIE",
+    "youtube": "YT_COOKIE",
+    "tiktok": "TT_COOKIE",
+}
+
+
+def get_platform_cookie(platform_code: str) -> str:
+    """Reads optional authenticated Cookie string from Vercel Environment Variables."""
+    env_name = COOKIE_ENV_MAP.get((platform_code or "").lower(), "")
+    if not env_name:
+        return ""
+    return (os.environ.get(env_name) or "").strip()
+
+
+def _make_cookie_failure(platform_code: str, cookie_configured: bool, reason: str = "") -> Dict[str, Any]:
+    """Returns a structured failure payload so bot_core can show clear Khmer Cookie guidance."""
+    env_name = COOKIE_ENV_MAP.get((platform_code or "").lower(), "")
+    return {
+        "success": False,
+        "direct_url": None,
+        "platform_code": platform_code.lower(),
+        "cookie_env": env_name,
+        "cookie_configured": bool(cookie_configured),
+        "error_reason": reason or ("cookie_expired" if cookie_configured else "cookie_missing"),
+    }
+
+
+def _build_youtube_sapisidhash(cookie_str: str, origin: str = "https://www.youtube.com") -> Optional[str]:
+    """Computes YouTube SAPISIDHASH Authorization header from SAPISID / __Secure-3PAPISID cookie."""
+    if not cookie_str:
+        return None
+    m = re.search(r'(?:^|;\s*)(?:__Secure-3PAPISID|SAPISID)=([^;\s]+)', cookie_str)
+    if not m:
+        return None
+    sapisid = m.group(1).strip()
+    ts = str(int(time.time()))
+    digest = hashlib.sha1(f"{ts} {sapisid} {origin}".encode("utf-8")).hexdigest()
+    return f"SAPISIDHASH {ts}_{digest}"
 
 # Standard browser headers to avoid anti-bot blocks
 DEFAULT_HEADERS = {
@@ -52,7 +95,7 @@ URL_PATTERNS = {
         re.IGNORECASE
     ),
     "facebook": re.compile(
-        r'https?://(?:[a-zA-Z0-9-]+\.)?(?:facebook\.com/(?:reel|watch|share|stories|groups/[^/]+/permalink|[^/]+/videos|video\.php)[^\s<>"\'`]*|fb\.watch/[^\s<>"\'`]+|fb\.com/[^\s<>"\'`]+)',
+        r'https?://(?:[a-zA-Z0-9-]+\.)?(?:facebook\.com/(?:reel|watch|share|stories|groups/[^/]+/(?:permalink|posts|videos)|[^/]+/videos|video\.php)[^\s<>"\'`]*|fb\.watch/[^\s<>"\'`]+|fb\.com/[^\s<>"\'`]+)',
         re.IGNORECASE
     ),
     "youtube": re.compile(
@@ -165,6 +208,104 @@ def extract_tiktok_video(url: str) -> Optional[Dict[str, Any]]:
                     }
     except Exception as e:
         print(f"[video_service] Lovetik exception: {e}")
+
+    # 4. Step 2 (Private / Friends-only Fallback via TT_COOKIE)
+    tt_cookie = get_platform_cookie("tiktok")
+    if tt_cookie:
+        priv = extract_tiktok_private_video(url, tt_cookie)
+        if priv:
+            return priv
+        return _make_cookie_failure("tiktok", cookie_configured=True, reason="cookie_expired")
+
+    return _make_cookie_failure("tiktok", cookie_configured=False, reason="cookie_missing")
+
+
+def extract_tiktok_private_video(url: str, tt_cookie: str) -> Optional[Dict[str, Any]]:
+    """
+    Extracts Private / Friends-only TikTok video stream using authenticated TT_COOKIE
+    by parsing __UNIVERSAL_DATA_FOR_REHYDRATION__ (playAddr / downloadAddr).
+    """
+    if not tt_cookie:
+        return None
+    headers = {
+        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.tiktok.com/",
+        "Cookie": tt_cookie,
+    }
+    try:
+        resp = requests.get(url, headers=headers, allow_redirects=True, timeout=(5.0, 12.0))
+        if resp.status_code != 200:
+            return None
+        page_text = resp.text
+
+        # Parse __UNIVERSAL_DATA_FOR_REHYDRATION__ JSON block
+        m_univ = re.search(
+            r'<script[^>]*id=["\']__UNIVERSAL_DATA_FOR_REHYDRATION__["\'][^>]*>(.*?)</script>',
+            page_text,
+            re.DOTALL
+        )
+        if m_univ:
+            try:
+                data = json.loads(m_univ.group(1))
+                default_scope = data.get("__DEFAULT_SCOPE__", {})
+                detail = default_scope.get("webapp.video-detail", {})
+                item = detail.get("itemInfo", {}).get("itemStruct", {})
+                video_obj = item.get("video", {})
+
+                direct_url = video_obj.get("playAddr") or video_obj.get("downloadAddr")
+                if not direct_url:
+                    bitrates = video_obj.get("bitrateInfo") or []
+                    for br in bitrates:
+                        url_list = (br.get("PlayAddr") or {}).get("UrlList") or []
+                        if url_list:
+                            direct_url = url_list[0]
+                            break
+
+                if direct_url and isinstance(direct_url, str) and direct_url.startswith("http"):
+                    raw_title = item.get("desc") or "TikTok Private Video"
+                    author_obj = item.get("author") or {}
+                    raw_author = author_obj.get("nickname") or author_obj.get("uniqueId") or "TikTok Creator"
+                    return {
+                        "success": True,
+                        "direct_url": direct_url,
+                        "title": clean_unwanted_thai(raw_title) or "TikTok Private Video",
+                        "author": clean_unwanted_thai(raw_author) or "TikTok Creator",
+                        "platform": "TikTok",
+                        "platform_code": "tiktok",
+                        "quality": "HD Private (No Watermark)",
+                        "is_private": True,
+                        "requires_buffer": True,
+                        "auth_cookie": tt_cookie,
+                        "referer": "https://www.tiktok.com/",
+                        "original_url": url,
+                    }
+            except Exception as e:
+                print(f"[video_service] TikTok private JSON parse warning: {e}")
+
+        # Regex fallback for playAddr / downloadAddr in raw page HTML
+        for pat in (r'"playAddr"\s*:\s*"([^"]+)"', r'"downloadAddr"\s*:\s*"([^"]+)"'):
+            m_addr = re.search(pat, page_text)
+            if m_addr:
+                raw_u = m_addr.group(1).encode("utf-8").decode("unicode_escape", errors="ignore").replace(r"\/", "/")
+                if raw_u.startswith("http"):
+                    return {
+                        "success": True,
+                        "direct_url": raw_u,
+                        "title": "TikTok Private Video",
+                        "author": "TikTok Creator",
+                        "platform": "TikTok",
+                        "platform_code": "tiktok",
+                        "quality": "HD Private (No Watermark)",
+                        "is_private": True,
+                        "requires_buffer": True,
+                        "auth_cookie": tt_cookie,
+                        "referer": "https://www.tiktok.com/",
+                        "original_url": url,
+                    }
+    except Exception as e:
+        print(f"[video_service] TikTok private extractor exception: {e}")
 
     return None
 
@@ -493,6 +634,87 @@ def extract_facebook_video(url: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[video_service] Facebook scraper exception: {e}")
 
+    # Step 2 (Private / Groups / Friends-only Fallback via FB_COOKIE)
+    fb_cookie = get_platform_cookie("facebook")
+    if fb_cookie:
+        priv = extract_facebook_private_video(url, fb_cookie)
+        if priv:
+            return priv
+        return _make_cookie_failure("facebook", cookie_configured=True, reason="cookie_expired")
+
+    return _make_cookie_failure("facebook", cookie_configured=False, reason="cookie_missing")
+
+
+def extract_facebook_private_video(url: str, fb_cookie: str) -> Optional[Dict[str, Any]]:
+    """
+    Extracts Private Facebook video (Groups, Reels, Friends-only) using authenticated FB_COOKIE.
+    Parses browser_native_hd_url, playable_url_quality_hd, browser_native_sd_url, playable_url, etc.
+    """
+    if not fb_cookie:
+        return None
+    fb_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://www.facebook.com/",
+        "Cookie": fb_cookie,
+    }
+    patterns = [
+        r'"browser_native_hd_url"\s*:\s*"([^"]+)"',
+        r'"playable_url_quality_hd"\s*:\s*"([^"]+)"',
+        r'"hd_src_no_ratelimit"\s*:\s*"([^"]+)"',
+        r'hd_src\s*:\s*["\']([^"\']+)["\']',
+        r'"browser_native_sd_url"\s*:\s*"([^"]+)"',
+        r'"playable_url"\s*:\s*"([^"]+)"',
+        r'"sd_src_no_ratelimit"\s*:\s*"([^"]+)"',
+        r'sd_src\s*:\s*["\']([^"\']+)["\']',
+        r'https?://[^\s"\'<>]*(?:video\.[^\s"\'<>]*fbcdn\.net)[^\s"\'<>]*(?:\.mp4)[^\s"\'<>]*',
+    ]
+
+    try:
+        resp = requests.get(url, headers=fb_headers, allow_redirects=True, timeout=(5.0, 12.0))
+        if resp.status_code != 200:
+            return None
+        # Detect expired cookie login redirect
+        if "/login" in (resp.url or "").lower() or "login.php" in (resp.url or "").lower():
+            return None
+
+        page_text = html.unescape(resp.text).replace("&quot;", '"').replace("&amp;", "&").replace(r"\/", "/")
+        for pat in patterns:
+            match = re.search(pat, page_text)
+            if match:
+                raw_url = match.group(1) if match.groups() else match.group(0)
+                direct_url = raw_url.encode("utf-8").decode("unicode_escape", errors="ignore").replace(r"\/", "/")
+                if direct_url.startswith("http"):
+                    title_match = re.search(r'<meta\s+(?:property|name)=["\']og:title["\']\s+content=["\']([^"\']+)["\']', page_text)
+                    raw_title = html.unescape(title_match.group(1)) if title_match else "Facebook Private Video"
+                    title = clean_unwanted_thai(raw_title) or "Facebook Private Video"
+                    if len(title) > 90:
+                        title = title[:87] + "..."
+                    return {
+                        "success": True,
+                        "direct_url": direct_url,
+                        "title": title,
+                        "author": "Facebook Private",
+                        "platform": "Facebook",
+                        "platform_code": "facebook",
+                        "quality": "HD Private (No Watermark)" if "hd" in pat.lower() else "SD Private",
+                        "is_private": True,
+                        "requires_buffer": True,
+                        "auth_cookie": fb_cookie,
+                        "referer": "https://www.facebook.com/",
+                        "original_url": url,
+                    }
+    except Exception as e:
+        print(f"[video_service] Facebook private extractor exception: {e}")
+
     return None
 
 
@@ -615,6 +837,159 @@ def extract_youtube_video(url: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[video_service] pytubefix import exception: {e}")
 
+    # 3. Step 2 (Private / Unlisted / Member-only Fallback via YT_COOKIE + InnerTube API)
+    yt_cookie = get_platform_cookie("youtube")
+    if yt_cookie:
+        priv = extract_youtube_private_video(canonical_url, video_id, yt_cookie)
+        if priv:
+            return priv
+        return _make_cookie_failure("youtube", cookie_configured=True, reason="cookie_expired")
+
+    return _make_cookie_failure("youtube", cookie_configured=False, reason="cookie_missing")
+
+
+def _pick_best_yt_format(streaming_data: Dict[str, Any], max_bytes: int = 48 * 1024 * 1024) -> Optional[Dict[str, Any]]:
+    """Selects best progressive MP4 (or adaptive MP4) stream under 48MB from InnerTube streamingData."""
+    formats = streaming_data.get("formats") or []
+    adaptive = streaming_data.get("adaptiveFormats") or []
+
+    def _is_mp4_under_limit(fmt: Dict[str, Any]) -> bool:
+        if not fmt.get("url"):
+            return False
+        mime = (fmt.get("mimeType") or "").lower()
+        if "video/mp4" not in mime:
+            return False
+        cl = fmt.get("contentLength")
+        if cl and str(cl).isdigit() and int(cl) > max_bytes:
+            return False
+        return True
+
+    # Prefer progressive MP4 (combined video + audio), highest height first
+    prog_candidates = [f for f in formats if _is_mp4_under_limit(f)]
+    if prog_candidates:
+        prog_candidates.sort(key=lambda f: int(f.get("height") or 0), reverse=True)
+        return prog_candidates[0]
+
+    # Fallback: adaptive MP4 under 48MB (prefer 720p/480p/360p)
+    adap_candidates = [f for f in adaptive if _is_mp4_under_limit(f)]
+    if adap_candidates:
+        adap_candidates.sort(key=lambda f: int(f.get("height") or 0), reverse=True)
+        return adap_candidates[0]
+
+    return None
+
+
+def extract_youtube_private_video(
+    canonical_url: str,
+    video_id: str,
+    yt_cookie: str,
+    max_bytes: int = 48 * 1024 * 1024
+) -> Optional[Dict[str, Any]]:
+    """
+    Extracts Private / Unlisted / Age-Restricted / Member-only YouTube video stream
+    using authenticated YT_COOKIE via YouTube InnerTube player API + HTML fallback (zero yt-dlp).
+    """
+    if not yt_cookie:
+        return None
+
+    auth_header = _build_youtube_sapisidhash(yt_cookie, origin="https://www.youtube.com")
+    base_headers = {
+        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Content-Type": "application/json",
+        "Origin": "https://www.youtube.com",
+        "Referer": canonical_url,
+        "Cookie": yt_cookie,
+    }
+    if auth_header:
+        base_headers["Authorization"] = auth_header
+
+    # 1. Authenticated InnerTube /youtubei/v1/player call
+    innertube_clients = [
+        {"clientName": "WEB", "clientVersion": "2.20260708.00.00"},
+        {"clientName": "ANDROID_VR", "clientVersion": "1.65.10", "androidSdkVersion": 32},
+    ]
+    for client_ctx in innertube_clients:
+        try:
+            payload = {
+                "videoId": video_id,
+                "context": {"client": client_ctx},
+                "contentCheckOk": True,
+                "racyCheckOk": True,
+            }
+            resp = requests.post(
+                "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                headers=base_headers,
+                json=payload,
+                timeout=(4.0, 10.0)
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                status = (data.get("playabilityStatus") or {}).get("status", "")
+                if status in ("LOGIN_REQUIRED", "ERROR"):
+                    continue
+                streaming_data = data.get("streamingData") or {}
+                best = _pick_best_yt_format(streaming_data, max_bytes=max_bytes)
+                if best and best.get("url"):
+                    vd = data.get("videoDetails") or {}
+                    title = clean_unwanted_thai(vd.get("title") or "YouTube Private Video") or "YouTube Private Video"
+                    author = clean_unwanted_thai(vd.get("author") or "YouTube Creator") or "YouTube Creator"
+                    quality = best.get("qualityLabel") or (f"{best.get('height')}p" if best.get("height") else "HD")
+                    cl = best.get("contentLength")
+                    size_int = int(cl) if cl and str(cl).isdigit() else None
+                    return {
+                        "success": True,
+                        "direct_url": best["url"],
+                        "title": title,
+                        "author": author,
+                        "platform": "YouTube",
+                        "platform_code": "youtube",
+                        "quality": f"{quality} Private (No Watermark)",
+                        "size": size_int,
+                        "is_private": True,
+                        "requires_buffer": True,
+                        "auth_cookie": yt_cookie,
+                        "referer": "https://www.youtube.com/",
+                        "original_url": canonical_url,
+                    }
+        except Exception as e:
+            print(f"[video_service] YouTube private InnerTube warning: {e}")
+            continue
+
+    # 2. Fallback: Authenticated watch HTML page (ytInitialPlayerResponse)
+    try:
+        html_headers = dict(base_headers)
+        html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        resp = requests.get(canonical_url, headers=html_headers, timeout=(4.0, 10.0))
+        if resp.status_code == 200:
+            m_init = re.search(r'var\s+ytInitialPlayerResponse\s*=\s*(\{.*?\});', resp.text, re.DOTALL)
+            if m_init:
+                data = json.loads(m_init.group(1))
+                streaming_data = data.get("streamingData") or {}
+                best = _pick_best_yt_format(streaming_data, max_bytes=max_bytes)
+                if best and best.get("url"):
+                    vd = data.get("videoDetails") or {}
+                    title = clean_unwanted_thai(vd.get("title") or "YouTube Private Video") or "YouTube Private Video"
+                    author = clean_unwanted_thai(vd.get("author") or "YouTube Creator") or "YouTube Creator"
+                    quality = best.get("qualityLabel") or "HD"
+                    return {
+                        "success": True,
+                        "direct_url": best["url"],
+                        "title": title,
+                        "author": author,
+                        "platform": "YouTube",
+                        "platform_code": "youtube",
+                        "quality": f"{quality} Private (No Watermark)",
+                        "is_private": True,
+                        "requires_buffer": True,
+                        "auth_cookie": yt_cookie,
+                        "referer": "https://www.youtube.com/",
+                        "original_url": canonical_url,
+                    }
+    except Exception as e:
+        print(f"[video_service] YouTube private HTML fallback warning: {e}")
+
     return None
 
 
@@ -649,21 +1024,33 @@ def extract_video_info(url: str, platform_code: Optional[str] = None) -> Optiona
 def fetch_video_buffer(
     video_url: str,
     max_bytes: int = 48 * 1024 * 1024,
-    original_url: Optional[str] = None
+    original_url: Optional[str] = None,
+    cookie: Optional[str] = None,
+    referer: Optional[str] = None
 ) -> Tuple[Optional[bytes], Optional[int]]:
     """
     Downloads video stream directly into memory (zero disk usage).
+    Supports authenticated Cookie and Referer headers for Private videos.
     Returns (bytes_data, total_size).
     If the file is larger than max_bytes or 50MB, returns (None, total_size)
-    so the bot can cleanly fallback to Inline Keyboard.
+    so the bot can cleanly notify or fallback to Inline Keyboard.
     """
+    req_headers = dict(DEFAULT_HEADERS)
+    if cookie:
+        req_headers["Cookie"] = cookie
+    if referer:
+        req_headers["Referer"] = referer
+        parsed_ref = urllib.parse.urlparse(referer)
+        if parsed_ref.scheme and parsed_ref.netloc:
+            req_headers["Origin"] = f"{parsed_ref.scheme}://{parsed_ref.netloc}"
+
     try:
         resp = requests.get(
             video_url,
-            headers=DEFAULT_HEADERS,
+            headers=req_headers,
             stream=True,
             allow_redirects=True,
-            timeout=(5.0, 20.0)
+            timeout=(5.0, 22.0)
         )
         if resp.status_code != 200:
             return None, None
