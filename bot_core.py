@@ -31,6 +31,7 @@ from media_gen_service import (
     parse_video_intent,
     generate_ai_image,
     generate_ai_video,
+    generate_free_ai_video,
     detect_aspect_ratio,
 )
 
@@ -634,8 +635,11 @@ class TelegramBot:
         image_bytes: Optional[bytes] = None
     ) -> None:
         """
-        Generates a 5-10s AI video (Text-to-Video or Image-to-Video) using Google Veo
-        in memory (zero disk usage) and sends via sendVideo (supports_streaming=True).
+        Generates a 100% FREE 10-second AI video (Text-to-Video or Image-to-Video)
+        with zero paid billing:
+        - Step 1: Free AI Video API (Hugging Face Wan2.1/LTX-Video or Pollinations Video) -> sendVideo .mp4
+        - Step 2 (100% Free Unlimited Fallback): 4-Scene Cinematic 10s Live Mini App (/api/preview/<id>)
+          with Ken Burns Zoom/Pan animation and built-in free video download.
         """
         self.send_chat_action(chat_id, "upload_video")
 
@@ -643,7 +647,7 @@ class TelegramBot:
         if not clean_prompt and not image_bytes:
             self.send_message(
                 chat_id,
-                "🎬 <b>របៀបប្រើប្រាស់មុខងារបង្កើតវីដេអូ AI (៥–១០ វិនាទី)៖</b>\n\n"
+                "🎬 <b>របៀបប្រើប្រាស់មុខងារបង្កើតវីដេអូ AI ឥតគិតថ្លៃ ១០០% (១០ វិនាទី)៖</b>\n\n"
                 "១. <b>Text-to-Video:</b> វាយ <code>/video នាគមាសហោះលើភ្នំពេលថ្ងៃរះ 16:9</code>\n"
                 "   ឬសរសេរ៖ <i>«បង្កើតវីដេអូ ទីក្រុងភ្នំពេញពេលយប់មានភ្លើងពណ៌»</i>\n"
                 "២. <b>Image-to-Video:</b> ផ្ញើរូបថតភ្ជាប់ Caption <code>/video ធ្វើឱ្យរូបនេះមានចលនា</code> "
@@ -655,45 +659,92 @@ class TelegramBot:
 
         mode_label = "Image-to-Video (រូបថត → វីដេអូ)" if image_bytes else "Text-to-Video (អត្ថបទ → វីដេអូ)"
         ratio = detect_aspect_ratio(clean_prompt, default="16:9")
-        self.send_message(
-            chat_id,
-            f"🎬 <b>កំពុងបង្កើតវីដេអូ AI ({mode_label})...</b>\n"
-            f"📐 ទំហំ: <code>{ratio}</code> | ⏱️ រយៈពេល: <b>8 វិនាទី</b>\n"
-            f"<i>សូមរង់ចាំបន្តិច ប្រព័ន្ធ Google Veo កំពុង Render វីដេអូជូន... ⏳</i>",
-            reply_to_message_id=message_id,
-            parse_mode="HTML"
-        )
-        self.send_chat_action(chat_id, "upload_video")
 
-        success, video_bytes, enhanced_prompt, info_or_err = generate_ai_video(
+        result = generate_free_ai_video(
             prompt=clean_prompt,
             api_key=self.solver.api_key,
             image_bytes=image_bytes,
             aspect_ratio=ratio,
-            duration_seconds=8
+            duration_seconds=10
         )
-        if not success or not video_bytes:
+
+        if not result.get("success"):
             self.send_message(
                 chat_id,
-                info_or_err,
+                result.get("error") or "❌ មិនអាចបង្កើតវីដេអូបានទេ សូមសាកល្បងម្ដងទៀត។",
                 reply_to_message_id=message_id,
                 parse_mode="HTML"
             )
             return
 
-        self.send_chat_action(chat_id, "upload_video")
         safe_prompt = html.escape(clean_unwanted_thai(clean_prompt or "Image-to-Video Animation")[:120])
-        caption = (
-            f"🎬 <b>វីដេអូ AI ({html.escape(mode_label)})</b>\n"
-            f"📝 <b>Prompt:</b> {safe_prompt}\n"
-            f"✨ <b>ម៉ូដែល:</b> <code>{html.escape(info_or_err)}</code> • {ratio}"
-        )
-        self.send_video(
+        model_used = result.get("model") or "Free AI Video"
+
+        # Step 1 succeeded: Direct MP4 buffer via sendVideo
+        if result.get("mode") == "mp4" and result.get("video_bytes"):
+            self.send_chat_action(chat_id, "upload_video")
+            caption = (
+                f"🎬 <b>វីដេអូ AI ឥតគិតថ្លៃ ({html.escape(mode_label)})</b>\n"
+                f"📝 <b>Prompt:</b> {safe_prompt}\n"
+                f"✨ <b>ម៉ូដែល:</b> <code>{html.escape(model_used)}</code> • {ratio}"
+            )
+            self.send_video(
+                chat_id=chat_id,
+                video=result["video_bytes"],
+                caption=caption,
+                reply_to_message_id=message_id,
+                supports_streaming=True,
+                parse_mode="HTML"
+            )
+            return
+
+        # Step 2 (100% Free Unlimited Fallback): 4-Scene 10s Cinematic Live Mini App Preview
+        miniapp_html = result.get("miniapp_html") or ""
+        app_id = self.preview_store.generate_id()
+        app_title = clean_unwanted_thai(clean_prompt or "AI Cinematic Video")[:60]
+        stored_remotely, _ = self.preview_store.save_preview(app_id, miniapp_html, title=app_title)
+
+        # Send portable HTML video player (also backs signed Telegram Cloud preview on Vercel)
+        self.send_chat_action(chat_id, "upload_document")
+        html_bytes = miniapp_html.encode("utf-8")
+        uploaded_fid = self.send_document(
             chat_id=chat_id,
-            video=video_bytes,
-            caption=caption,
+            file_bytes=html_bytes,
+            filename=f"{app_id}_video_10s.html",
+            mime_type="text/html",
+            caption=(
+                f"🎞️ <b>ឯកសារវីដេអូ AI 10 វិនាទី (Free Offline/Web):</b> <code>{app_id}_video_10s.html</code>\n"
+                f"💡 <i>អាចបើកក្នុង Telegram Mini App ឬ Browser ដើម្បីមើល និងទាញយកវីដេអូដោយឥតគិតថ្លៃ!</i>"
+            ),
             reply_to_message_id=message_id,
-            supports_streaming=True,
+            parse_mode="HTML"
+        )
+
+        fid_for_url = uploaded_fid if (uploaded_fid and uploaded_fid != "ok") else None
+        preview_url = self.preview_store.build_preview_url(
+            app_id=app_id,
+            file_id=fid_for_url,
+            stored_remotely=stored_remotely,
+            bot_token=self.token
+        )
+
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🎬 មើលវីដេអូ AI 10 វិនាទី (Live Preview)", "web_app": {"url": preview_url}}]
+            ]
+        }
+        msg_text = (
+            f"🎬 <b>វីដេអូ AI 10 វិនាទី (ឥតគិតថ្លៃ ១០០%)</b>\n"
+            f"📝 <b>Prompt:</b> {safe_prompt}\n"
+            f"📐 <b>ទំហំ:</b> <code>{ratio}</code> | ⏱️ <b>រយៈពេល:</b> 10 វិនាទី (4 ប្លង់ Cinematic Zoom/Pan)\n"
+            f"✨ <b>ប្រព័ន្ធ:</b> <code>{html.escape(model_used)}</code>\n\n"
+            f"👇 <i>ចុចប៊ូតុងខាងក្រោមដើម្បីមើលវីដេអូមានចលនាផ្ទាល់ និងទាញយកដោយឥតគិតថ្លៃ៖</i>"
+        )
+        self.send_message(
+            chat_id,
+            msg_text,
+            reply_to_message_id=message_id,
+            reply_markup=reply_markup,
             parse_mode="HTML"
         )
 

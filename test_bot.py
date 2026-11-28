@@ -1074,7 +1074,23 @@ def test_ai_image_and_veo_video_generator():
         assert "Angkor Wat" in en
         assert "gemini-2.5-flash" in mock_post.call_args[0][0]
 
-    # 3. Verify Fast AI Image Generation (gemini-2.5-flash-image)
+    # 3. Verify 100% Free Pollinations Primary Image Generation + Gemini Fallback
+    fake_jpg_bytes = b"\xff\xd8\xff\xe0" + b"FAKE_POLLINATIONS_IMAGE" * 100
+    mock_poll_img = MagicMock()
+    mock_poll_img.status_code = 200
+    mock_poll_img.headers = {"Content-Type": "image/jpeg"}
+    mock_poll_img.content = fake_jpg_bytes
+    with patch("media_gen_service.enhance_media_prompt", return_value="Cinematic Angkor Wat sunset"), \
+         patch("requests.get", return_value=mock_poll_img) as mock_poll_get:
+        ok, img_bytes, enh, model_used = generate_ai_image("ប្រាសាទអង្គរវត្ត", api_key="fake_key")
+        assert ok is True
+        assert img_bytes == fake_jpg_bytes
+        assert "Pollinations" in model_used
+        called_url = mock_poll_get.call_args[0][0]
+        assert "image.pollinations.ai/prompt/" in called_url
+        assert "nologo=true" in called_url
+
+    # 3b. Verify Gemini Image fallback when Pollinations returns None
     fake_png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nFAKE_AI_IMAGE_BYTES").decode("ascii")
     mock_img_resp = MagicMock()
     mock_img_resp.status_code = 200
@@ -1082,6 +1098,7 @@ def test_ai_image_and_veo_video_generator():
         "candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": fake_png_b64}}]}}]
     }
     with patch("media_gen_service.enhance_media_prompt", return_value="Cinematic Angkor Wat sunset"), \
+         patch("media_gen_service.fetch_pollinations_image_bytes", return_value=None), \
          patch("requests.post", return_value=mock_img_resp) as mock_img_post:
         ok, img_bytes, enh, model_used = generate_ai_image("ប្រាសាទអង្គរវត្ត", api_key="fake_key")
         assert ok is True
@@ -1147,62 +1164,89 @@ def test_ai_image_and_veo_video_generator():
         assert "Billing" in err_kh
         assert "Google AI Studio" in err_kh
 
-    # 6. Verify TelegramBot end-to-end routing (/img, natural video, photo+caption Image-to-Video, reply-to-photo)
-    bot = TelegramBot(token="fake_token")
-    actions = []
-    sent_photos = []
-    sent_videos = []
-    sent_msgs = []
-    bot.send_chat_action = lambda cid, act: actions.append(act)
-    bot.send_photo = lambda chat_id, photo_bytes, **kw: (sent_photos.append((chat_id, photo_bytes, kw)) or True)
-    bot.send_video = lambda chat_id, video, **kw: (sent_videos.append((chat_id, video, kw)) or True)
-    bot.send_message = lambda cid, txt, **kw: (sent_msgs.append((cid, txt, kw)) or True)
-    bot.get_file_bytes = lambda fid: b"FAKE_UPLOADED_PHOTO"
+    # 6. Verify TelegramBot end-to-end routing (/img, Free MP4 Video, Free 10s Cinematic Mini App Fallback, Image-to-Video)
+    import tempfile
+    from preview_service import PreviewStore
+    from media_gen_service import generate_free_ai_video
 
-    import bot_core
-    with patch.object(bot_core, "generate_ai_image", return_value=(True, b"PNG_BYTES", "Enhanced", "gemini-2.5-flash-image")), \
-         patch.object(bot_core, "generate_ai_video", return_value=(True, b"MP4_BYTES", "Enhanced Vid", "veo-2.0-generate-001")) as mock_bot_vid:
-        # 6a. /img command
-        bot.handle_update({"message": {"chat": {"id": 321}, "message_id": 1, "text": "/img ប្រាសាទអង្គរវត្ត"}})
-        assert "upload_photo" in actions
-        assert len(sent_photos) == 1
-        assert sent_photos[0][1] == b"PNG_BYTES"
+    with tempfile.TemporaryDirectory() as tmp_vid_dir:
+        bot = TelegramBot(token="fake_token")
+        bot.preview_store = PreviewStore(storage_dir=tmp_vid_dir)
+        actions = []
+        sent_photos = []
+        sent_videos = []
+        sent_docs = []
+        sent_msgs = []
+        bot.send_chat_action = lambda cid, act: actions.append(act)
+        bot.send_photo = lambda chat_id, photo_bytes, **kw: (sent_photos.append((chat_id, photo_bytes, kw)) or True)
+        bot.send_video = lambda chat_id, video, **kw: (sent_videos.append((chat_id, video, kw)) or True)
+        bot.send_document = lambda **kw: (sent_docs.append(kw) or "BQACFAKE_VID_HTML_FID")
+        bot.send_message = lambda cid, txt, **kw: (sent_msgs.append((cid, txt, kw)) or True)
+        bot.get_file_bytes = lambda fid: b"FAKE_UPLOADED_PHOTO"
 
-        # 6b. Photo + Caption Image-to-Video
-        actions.clear()
-        bot.handle_update({
-            "message": {
-                "chat": {"id": 321},
-                "message_id": 2,
-                "caption": "បង្កើតវីដេអូ ឱ្យរូបនេះមានចលនាស្រទន់",
-                "photo": [{"file_id": "ph_1"}]
-            }
-        })
-        assert "upload_video" in actions
-        assert len(sent_videos) == 1
-        assert sent_videos[0][1] == b"MP4_BYTES"
-        assert sent_videos[0][2].get("supports_streaming") is True
-        assert mock_bot_vid.call_args[1]["image_bytes"] == b"FAKE_UPLOADED_PHOTO"
+        import bot_core
+        with patch.object(bot_core, "generate_ai_image", return_value=(True, b"PNG_BYTES", "Enhanced", "Pollinations AI (Free HD)")), \
+             patch.object(bot_core, "generate_free_ai_video", return_value={
+                 "success": True, "mode": "mp4", "video_bytes": b"MP4_BYTES",
+                 "enhanced_prompt": "Enhanced Vid", "model": "HuggingFace (Wan2.1)"
+             }) as mock_bot_vid:
+            # 6a. /img command
+            bot.handle_update({"message": {"chat": {"id": 321}, "message_id": 1, "text": "/img ប្រាសាទអង្គរវត្ត"}})
+            assert "upload_photo" in actions
+            assert len(sent_photos) == 1
+            assert sent_photos[0][1] == b"PNG_BYTES"
 
-        # 6c. Reply-to-photo /video Image-to-Video
-        sent_videos.clear()
-        bot.handle_update({
-            "message": {
-                "chat": {"id": 321},
-                "message_id": 3,
-                "text": "/video ធ្វើឱ្យរូបនេះហោះឡើងលើ",
-                "reply_to_message": {"photo": [{"file_id": "ph_replied"}]}
-            }
-        })
-        assert len(sent_videos) == 1
-        assert mock_bot_vid.call_args[1]["image_bytes"] == b"FAKE_UPLOADED_PHOTO"
+            # 6b. Photo + Caption Image-to-Video (direct MP4 mode)
+            actions.clear()
+            bot.handle_update({
+                "message": {
+                    "chat": {"id": 321},
+                    "message_id": 2,
+                    "caption": "បង្កើតវីដេអូ ឱ្យរូបនេះមានចលនាស្រទន់",
+                    "photo": [{"file_id": "ph_1"}]
+                }
+            })
+            assert "upload_video" in actions
+            assert len(sent_videos) == 1
+            assert sent_videos[0][1] == b"MP4_BYTES"
+            assert sent_videos[0][2].get("supports_streaming") is True
+            assert mock_bot_vid.call_args[1]["image_bytes"] == b"FAKE_UPLOADED_PHOTO"
 
-    # 7. Verify vercel.json maxDuration >= 60
+        # 6c. 100% Free Unlimited 10s Cinematic Mini App Fallback (when free GPU video APIs are unavailable)
+        sent_docs.clear()
+        sent_msgs.clear()
+        with patch("media_gen_service.enhance_media_prompt", return_value="Golden dragon over misty mountains"), \
+             patch("media_gen_service._try_pollinations_video", return_value=(None, None)), \
+             patch("media_gen_service._try_free_hf_video", return_value=(None, None)):
+            bot.handle_update({
+                "message": {
+                    "chat": {"id": 321},
+                    "message_id": 3,
+                    "text": "/video នាគមាសហោះលើភ្នំ 16:9",
+                    "reply_to_message": {"photo": [{"file_id": "ph_replied"}]}
+                }
+            })
+            assert len(sent_docs) == 1
+            assert sent_docs[0]["filename"].endswith("_video_10s.html")
+            assert b"telegram-web-app.js" in sent_docs[0]["file_bytes"]
+            assert b"image.pollinations.ai/prompt/" in sent_docs[0]["file_bytes"]
+            assert len(sent_msgs) == 1
+            kb = sent_msgs[0][2]["reply_markup"]["inline_keyboard"]
+            assert "/api/preview/app_" in kb[0][0]["web_app"]["url"]
+
+    # 7. Verify 9-Word Rule + Probing Questions & Academic/Code Exemption in SYSTEM_INSTRUCTION
+    assert "9-WORD RULE" in SYSTEM_INSTRUCTION
+    assert "Maximum 9 words" in SYSTEM_INSTRUCTION
+    assert "ត្រឹមតែ ៩ ពាក្យចុះក្រោម" in SYSTEM_INSTRUCTION
+    assert "សំណួរដេញដោល" in SYSTEM_INSTRUCTION
+    assert "លើកលែងច្បាប់ ៩ ពាក្យ" in SYSTEM_INSTRUCTION
+
+    # 8. Verify vercel.json maxDuration >= 60
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "vercel.json"), "r", encoding="utf-8") as f:
         vj = json.load(f)
         assert vj["functions"]["api/index.py"]["maxDuration"] >= 60
 
-    print("✓ AI Image Generator & Veo Video Generator tests passed.")
+    print("✓ AI Image Generator (100% Free Pollinations), Free 10s Video Generator & 9-Word Rule tests passed.")
 
 
 if __name__ == "__main__":
