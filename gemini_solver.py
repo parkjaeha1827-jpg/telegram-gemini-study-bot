@@ -20,6 +20,12 @@ import base64
 import datetime
 import requests
 from typing import Optional, Tuple, List, Dict, Any
+from persona_service import (
+    EvolvingPersonaStore,
+    AutoReflectionEngine,
+    format_persona_for_system_prompt,
+    should_trigger_reflection,
+)
 
 try:
     from dotenv import load_dotenv
@@ -543,10 +549,32 @@ class GeminiSolver:
         ]
         self.candidate_models = list(dict.fromkeys(self.candidate_models))
         self.memory = ChatMemory(max_messages=20)
+        self.persona_store = EvolvingPersonaStore()
+        self.reflection_engine = AutoReflectionEngine(store=self.persona_store, api_key=self.api_key)
 
     def clear_history(self, chat_id: int) -> None:
-        """Clears memory for chat_id."""
+        """Clears short-term chat memory for chat_id (preserves long-term Evolving Persona)."""
         self.memory.clear(chat_id)
+
+    def maybe_reflect(self, chat_id: Optional[int], user_text: str = "") -> Optional[Dict[str, Any]]:
+        """
+        Runs Auto-Reflection when triggered (every 5 messages or on emotionally/personally
+        significant conversations) to evolve the user's personality record in DB.
+        """
+        if chat_id is None or not self.api_key:
+            return None
+        try:
+            persona = self.persona_store.get_persona(chat_id)
+            if should_trigger_reflection(persona, user_text):
+                recent_history = self.memory.get_history(chat_id)
+                return self.reflection_engine.reflect_and_update(
+                    chat_id=chat_id,
+                    recent_history=recent_history,
+                    api_key=self.api_key
+                )
+        except Exception as e:
+            print(f"[GeminiSolver Auto-Reflection Warning] {e}")
+        return None
 
     def solve(
         self,
@@ -614,7 +642,25 @@ class GeminiSolver:
             "parts": current_user_parts
         })
 
-        dynamic_sys_instruction = f"{SYSTEM_INSTRUCTION}\n\n==================================================\n{get_cambodia_datetime_context()}\n=================================================="
+        persona_block = ""
+        if chat_id is not None:
+            try:
+                user_persona = self.persona_store.get_persona(chat_id)
+                persona_block = format_persona_for_system_prompt(user_persona)
+            except Exception as e:
+                print(f"[GeminiSolver Persona Load Warning] {e}")
+
+        dynamic_sys_instruction = (
+            f"{SYSTEM_INSTRUCTION}\n\n"
+            f"==================================================\n"
+            f"{get_cambodia_datetime_context()}\n"
+            f"=================================================="
+        )
+        if persona_block:
+            dynamic_sys_instruction += (
+                f"\n\n{persona_block}\n"
+                f"=================================================="
+            )
 
         payload = {
             "contents": contents,
@@ -673,7 +719,7 @@ class GeminiSolver:
                             except Exception:
                                 pass
 
-                        # Record turn into memory if chat_id provided
+                        # Record turn into memory and update persona interaction counter if chat_id provided
                         if chat_id is not None:
                             user_label = "[សារសំឡេង]" if is_voice else (prompt.strip() or "[ផ្ញើរូបភាពលំហាត់]")
                             self.memory.add_turn(
@@ -681,6 +727,10 @@ class GeminiSolver:
                                 user_text=user_label,
                                 model_text=final_reply
                             )
+                            try:
+                                self.persona_store.increment_message_count(chat_id)
+                            except Exception as e:
+                                print(f"[GeminiSolver Persona Count Warning] {e}")
                         return True, final_reply
                     return False, raw_text
 

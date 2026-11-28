@@ -705,6 +705,9 @@ class TelegramBot:
                         self.send_message(chat_id, answer, reply_to_message_id=message_id)
                 else:
                     self.send_message(chat_id, answer, reply_to_message_id=message_id)
+
+            # Post-reply Auto-Reflection (0ms perceived delay for user)
+            self.solver.maybe_reflect(chat_id, caption or answer)
             return
 
         # Handle Photo (Homework Image)
@@ -778,9 +781,12 @@ class TelegramBot:
             blocks, _ = extract_code_blocks(answer)
             if find_previewable_html(blocks):
                 self._handle_code_response(chat_id, message_id, answer)
+                self.solver.maybe_reflect(chat_id, text)
                 return
 
             self._send_rendered_solution_or_text(chat_id, answer, message_id)
+            # Post-reply Auto-Reflection (updates Evolving Persona every 5 msgs or significant chats)
+            self.solver.maybe_reflect(chat_id, text)
             return
 
     def _handle_command(self, chat_id: int, message_id: int, command_text: str) -> None:
@@ -860,6 +866,25 @@ class TelegramBot:
                 "🧹 អូខេ! ខ្ញុំបានលុបប្រវត្តិការសន្ទនាមុនៗអស់ហើយ! តោះ ចាប់ផ្ដើមនិយាយគ្នាសារថ្មី 😊",
                 reply_to_message_id=message_id
             )
+
+        elif cmd in ["/persona", "/persona@yourbot"]:
+            p = self.solver.persona_store.get_persona(chat_id)
+            vocab = ", ".join(p.get("learned_vocabulary") or []) or "មិនទាន់មាន"
+            habits = "; ".join(p.get("user_habits") or []) or "មិនទាន់មាន"
+            prefs = "; ".join(p.get("user_preferences") or []) or "មិនទាន់មាន"
+            notes_list = p.get("evolution_notes") or []
+            notes = "\n".join(f"• {n}" for n in notes_list[-5:]) if notes_list else "• មិនទាន់មានកំណត់ត្រាវិវត្តន៍ប្រចាំថ្ងៃទេ"
+            persona_msg = (
+                "🧠 <b>ប្រព័ន្ធវិវត្តន៍បុគ្គលិកលក្ខណៈ (Self-Evolving Persona)</b>\n\n"
+                f"❤️ <b>កម្រិតភាពស្និទ្ធស្នាល:</b> {p.get('relationship_level', 1)}/10 ({html.escape(str(p.get('relationship_label', '')))})\n"
+                f"🎭 <b>អារម្មណ៍បច្ចុប្បន្ន:</b> {html.escape(str(p.get('mood', 'សប្បាយ')))}\n"
+                f"💬 <b>ចំនួនសារសរុប:</b> {p.get('message_count', 0)}\n"
+                f"🗣️ <b>ពាក្យសម្ដីដែលបានរៀន:</b> {html.escape(vocab)}\n"
+                f"🧩 <b>ទម្លាប់របស់អ្នក:</b> {html.escape(habits)}\n"
+                f"⭐ <b>ចំណង់ចំណូលចិត្ត:</b> {html.escape(prefs)}\n\n"
+                f"📔 <b>កំណត់ត្រាវិវត្តន៍ប្រចាំថ្ងៃ:</b>\n{html.escape(notes)}"
+            )
+            self.send_message(chat_id, persona_msg, reply_to_message_id=message_id, parse_mode="HTML")
 
         else:
             self.send_message(

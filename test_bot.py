@@ -902,6 +902,140 @@ def test_app_builder_live_preview_and_code_export():
     print("✓ Full-Stack App Builder, Live Mini App Preview, and Portable Code Export passed.")
 
 
+def test_self_evolving_personality_and_daily_learning():
+    print("Testing Self-Evolving Personality, Firestore/KV storage, Auto-Reflection Engine, and System Prompt injection...")
+    import tempfile
+    from unittest.mock import patch, MagicMock
+    from persona_service import (
+        EvolvingPersonaStore,
+        AutoReflectionEngine,
+        should_trigger_reflection,
+        is_significant_conversation,
+        format_persona_for_system_prompt,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        store_file = os.path.join(tmp_dir, "personas.json")
+        store = EvolvingPersonaStore(storage_path=store_file)
+
+        # 1. Verify default schema and 5-message trigger rule
+        chat_id = 77701
+        p = store.get_persona(chat_id)
+        assert p["relationship_level"] == 1
+        assert p["mood"] == "សប្បាយ"
+        assert p["learned_vocabulary"] == []
+        assert p["user_habits"] == []
+        assert p["user_preferences"] == []
+        assert p["evolution_notes"] == []
+
+        for i in range(1, 5):
+            p = store.increment_message_count(chat_id)
+            assert should_trigger_reflection(p, "សួស្តី") is False
+
+        # On 5th message -> triggers Auto-Reflection!
+        p = store.increment_message_count(chat_id)
+        assert p["message_count"] == 5
+        assert should_trigger_reflection(p, "សួស្តី") is True
+
+        # Significant conversation early trigger (delta >= 2)
+        p_sig = dict(p)
+        p_sig["message_count"] = 7
+        p_sig["last_reflected_count"] = 5
+        assert is_significant_conversation("ចាំទុកផង ខ្ញុំចូលចិត្តផឹកកាហ្វេទឹកដោះគោរាល់ព្រឹក") is True
+        assert should_trigger_reflection(p_sig, "ចាំទុកផង ខ្ញុំចូលចិត្តផឹកកាហ្វេទឹកដោះគោរាល់ព្រឹក") is True
+
+        # 2. Test AutoReflectionEngine calling gemini-2.5-flash & merging JSON (with Thai stripping)
+        mock_reflection_json = json.dumps({
+            "new_vocabulary": ["អេមស្នេហ៍", "សាហាវណាស់ ค่า"],
+            "mood": "កក់ក្ដៅ",
+            "relationship_delta": 1,
+            "new_habits": ["ផឹកកាហ្វេទឹកដោះគោរាល់ព្រឹក"],
+            "new_preferences": ["ចូលចិត្តសរសេរកូដ និងស្ដាប់ចម្រៀងសេដ"],
+            "new_evolution_note": "អ្នកប្រើប្រាស់ចូលចិត្តការនិយាយលេងសើចបែបស្និទ្ធស្នាល"
+        }, ensure_ascii=False)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": mock_reflection_json}]}}]
+        }
+
+        engine = AutoReflectionEngine(store=store, api_key="fake_key")
+        sample_history = [
+            {"role": "user", "parts": [{"text": "អេមស្នេហ៍ណាស់ ព្រឹកនេះខ្ញុំផឹកកាហ្វេទឹកដោះគោ"}]},
+            {"role": "model", "parts": [{"text": "ហ្នឹងហើយ! កាហ្វេព្រឹកឆ្ងាញ់ណាស់ណា៎!"}]}
+        ]
+
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            updated = engine.reflect_and_update(chat_id, sample_history)
+            assert updated is not None
+            assert mock_post.called
+            called_url = mock_post.call_args[0][0]
+            assert "gemini-2.5-flash" in called_url
+            assert "អេមស្នេហ៍" in updated["learned_vocabulary"]
+            # Thai characters must be stripped
+            assert all("ค่า" not in v for v in updated["learned_vocabulary"])
+            assert updated["relationship_level"] == 2
+            assert updated["mood"] == "កក់ក្ដៅ"
+            assert "ផឹកកាហ្វេទឹកដោះគោរាល់ព្រឹក" in updated["user_habits"]
+            assert any("សរសេរកូដ" in pref for pref in updated["user_preferences"])
+            assert len(updated["evolution_notes"]) == 1
+            assert updated["last_reflected_count"] == 5
+
+        # 3. Test System Prompt injection inside GeminiSolver.solve()
+        solver = GeminiSolver(api_key="fake_key", model="gemini-3.1-flash-lite")
+        solver.persona_store = store
+        solver.reflection_engine = engine
+
+        mock_reply = MagicMock()
+        mock_reply.status_code = 200
+        mock_reply.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "អេមស្នេហ៍តើ! ព្រឹកនេះផឹកកាហ្វេហើយនៅ?"}]}}]
+        }
+
+        with patch("requests.post", return_value=mock_reply) as mock_solve_post:
+            ok, reply = solver.solve("សួស្តីព្រឹកនេះ", chat_id=chat_id)
+            assert ok is True
+            sent_payload = mock_solve_post.call_args[1]["json"]
+            sys_text = sent_payload["systemInstruction"]["parts"][0]["text"]
+            assert "SELF-EVOLVING PERSONA" in sys_text
+            assert "អេមស្នេហ៍" in sys_text
+            assert "ផឹកកាហ្វេទឹកដោះគោរាល់ព្រឹក" in sys_text
+            assert "Asia/Phnom_Penh" in sys_text
+
+        # 4. Test Firebase Firestore & Vercel KV remote sync calls
+        remote_store = EvolvingPersonaStore(storage_path=os.path.join(tmp_dir, "remote_p.json"))
+        remote_store.kv_url = "https://mock-kv.upstash.io"
+        remote_store.kv_token = "mock_token"
+        remote_store.firebase_project = "mock-firebase-proj"
+        with patch("requests.post") as mock_kv_post, patch("requests.patch") as mock_fs_patch:
+            mock_kv_post.return_value.status_code = 200
+            mock_fs_patch.return_value.status_code = 200
+            remote_store.save_persona(99901, updated)
+            assert mock_kv_post.called
+            assert "evolving_persona:99901" in mock_kv_post.call_args[0][0]
+            assert mock_fs_patch.called
+            assert "evolving_personas/99901" in mock_fs_patch.call_args[0][0]
+
+        # 5. Test /persona command in TelegramBot
+        bot = TelegramBot(token="fake_token")
+        bot.solver.persona_store = store
+        captured_msgs = []
+        bot.send_message = lambda cid, text, **kwargs: (captured_msgs.append((cid, text, kwargs)) or True)
+        bot.handle_update({
+            "message": {
+                "chat": {"id": chat_id},
+                "message_id": 99,
+                "text": "/persona"
+            }
+        })
+        assert len(captured_msgs) == 1
+        assert "Self-Evolving Persona" in captured_msgs[0][1]
+        assert "អេមស្នេហ៍" in captured_msgs[0][1]
+
+    print("✓ Self-Evolving Personality & Daily Learning passed.")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("🧪 Running Verification Tests")
@@ -924,6 +1058,7 @@ if __name__ == "__main__":
     test_cambodia_datetime_and_astrology_instructions()
     test_expressive_tts_and_music_notes()
     test_app_builder_live_preview_and_code_export()
+    test_self_evolving_personality_and_daily_learning()
     print("========================================")
     print("🎉 ALL TESTS PASSED SUCCESSFULLY!")
     print("========================================")

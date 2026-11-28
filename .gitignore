@@ -21,6 +21,8 @@ Thumbs.db
 
 # Local conversation memory & temporary files
 chat_history.json
+evolving_personas.json
+.preview_cache/
 *.png
 *.mp3
 *.ogg
